@@ -1,4 +1,4 @@
-﻿#include "movement.h"
+#include "movement.h"
 #include "../../variables/variables.h"
 #include "../../globals/globals.h"
 #include "../../cache/cache.h"
@@ -43,12 +43,11 @@ void TickFly(bool& gravOver, float& gravBackup) {
     bool roblox_active = RobloxFocused();
     bool allow_toggle = roblox_active;
 
-    
     static bool flyTog=false, flyWas=false;
     bool key_active = false;
     if (allow_toggle) key_active = KeyActive(variables::Movement::flyKey, variables::Movement::flyKeyMode, flyTog, flyWas);
     bool fly_active = variables::Movement::fly && (variables::Movement::flyKey==0 ? true : key_active);
-    
+
     fly_active_state.store(fly_active);
 
     auto localChar = Globals::localPlayer.GetModelRef();
@@ -81,7 +80,7 @@ void TickFly(bool& gravOver, float& gravBackup) {
         return;
     }
     was_active=true;
-    
+
     if (!gravOver && Globals::workspace.Addr) {
         auto world = memory->read<std::uintptr_t>(Globals::workspace.Addr + Offsets::Workspace::World);
         if (world){ gravBackup = memory->read<float>(world + Offsets::World::Gravity); gravOver=true; }
@@ -95,9 +94,7 @@ void TickFly(bool& gravOver, float& gravBackup) {
     rbx::vector3_t right(-rot.data[0], rot.data[3], -rot.data[6]);
     if (fwd.magnitude()<1e-6f) fwd=rbx::vector3_t(0,0,1); else fwd=fwd.normalize();
     if (right.magnitude()<1e-6f) right=rbx::vector3_t(1,0,0); else right=right.normalize();
-    
-    
-    
+
     fwd.y = 0.0f;
     if (fwd.magnitude()<1e-6f) fwd=rbx::vector3_t(0,0,1); else fwd=fwd.normalize();
     bool allow_move = roblox_active;
@@ -287,7 +284,7 @@ void Loop() {
         }
         std::this_thread::sleep_for(variables::Movement::fly ? 1ms : 8ms);
     }
-    
+
     if (gravOver && Globals::workspace.Addr) {
         auto world = memory->read<std::uintptr_t>(Globals::workspace.Addr + Offsets::Workspace::World);
         if (world) memory->write<float>(world + Offsets::World::Gravity, gravBackup);

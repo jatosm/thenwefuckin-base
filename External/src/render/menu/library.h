@@ -6,6 +6,8 @@
 #include "../../../ext/imgui/imgui.h"
 #include "../../../ext/imgui/imgui_internal.h"
 
+#include <cstdlib>
+#include <cstring>
 #include <string>
 #include <unordered_map>
 
@@ -80,6 +82,12 @@ inline void ApplyStyle()
     style.Colors[ImGuiCol_WindowBg] = g_Theme.WindowBg;
     style.Colors[ImGuiCol_PopupBg] = g_Theme.CardBg;
     style.Colors[ImGuiCol_Text] = g_Theme.Text;
+    style.Colors[ImGuiCol_Button] = g_Theme.ControlBg;
+    style.Colors[ImGuiCol_ButtonHovered] = g_Theme.ControlInactive;
+    style.Colors[ImGuiCol_ButtonActive] = g_Theme.ControlInactive;
+    style.Colors[ImGuiCol_Header] = g_Theme.ControlBg;
+    style.Colors[ImGuiCol_HeaderHovered] = g_Theme.ControlInactive;
+    style.Colors[ImGuiCol_HeaderActive] = g_Theme.Accent;
 }
 
 inline void Initialize(ImFont* cascadiaMonoBL)
@@ -181,6 +189,76 @@ inline bool Checkbox(const char* label, bool* value, const ImVec2& pos)
     draw->AddText(font, 13.5f * g_fontScale, ImVec2(min.x + 14.0f, min.y + (box_size.y - _ts.y) * 0.5f), ColorU32(theme.Text), display);
     ImGui::PopID();
     return pressed;
+}
+
+inline bool ButtonCore(const char* label, const ImVec2& min, const ImVec2& size, bool active = false)
+{
+    const char* display = label;
+    const char* hash = strstr(label, "##");
+    std::string displayStr;
+    if (hash) displayStr.assign(label, hash - label), display = displayStr.c_str();
+
+    ImGui::PushID(label);
+    ImGui::SetCursorScreenPos(min);
+    const bool pressed = ImGui::InvisibleButton("##btn", size);
+    const bool hovered = ImGui::IsItemHovered();
+    const bool held = ImGui::IsItemActive();
+    const ImGuiID id = ImGui::GetItemID();
+
+    const float hover_anim = AnimateFloat(id, hovered || held, 16.0f);
+    const float active_anim = AnimateFloat(id + 1, active, 16.0f);
+
+    const Theme& theme = GetTheme();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+
+    ImVec4 bg = LerpColor(theme.ControlBg, theme.ControlInactive, hover_anim * 0.45f);
+    if (active_anim > 0.01f) {
+        ImVec4 activeBg = LerpColor(bg, theme.Accent, 0.22f);
+        bg = LerpColor(bg, activeBg, active_anim);
+    }
+    draw->AddRectFilled(min, min + size, ColorU32(bg), 0.0f);
+    draw->AddRect(min, min + size, OutlineBlack(), 0.0f, 0, 1.0f);
+
+    const ImU32 innerCol = (active_anim > 0.01f)
+        ? ColorU32(LerpColor(ImVec4(0.204f, 0.204f, 0.220f, 1.0f), theme.Accent, active_anim))
+        : OutlineInner();
+    draw->AddRect(min + ImVec2(1.0f, 1.0f), min + size - ImVec2(1.0f, 1.0f), innerCol, 0.0f, 0, 1.0f);
+
+    const Fonts& fonts = GetFonts();
+    ImFont* font = fonts.CascadiaMonoBL ? fonts.CascadiaMonoBL : ImGui::GetFont();
+    const float font_size = 12.0f * g_fontScale;
+    const ImVec2 text_sz = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, display);
+    const ImVec2 text_pos(
+        std::floor(min.x + (size.x - text_sz.x) * 0.5f),
+        std::floor(min.y + (size.y - text_sz.y) * 0.5f)
+    );
+
+    const ImVec4 base_text = active ? theme.Accent : theme.Text;
+    const ImVec4 text_col = LerpColor(base_text, theme.TextBright, hover_anim * 0.35f);
+    draw->AddText(font, font_size, text_pos, ColorU32(text_col), display);
+
+    ImGui::PopID();
+    return pressed && !PopupBlocking();
+}
+
+inline bool Button(const char* label, const ImVec2& size = ImVec2(0.0f, 22.0f), bool active = false)
+{
+    ImVec2 actual_size = size;
+    if (actual_size.x <= 0.0f)
+        actual_size.x = ImGui::GetContentRegionAvail().x;
+    if (actual_size.y <= 0.0f)
+        actual_size.y = 22.0f;
+
+    const ImVec2 min = ImVec2(std::floor(ImGui::GetCursorScreenPos().x), std::floor(ImGui::GetCursorScreenPos().y));
+    return ButtonCore(label, min, actual_size, active);
+}
+
+inline bool ButtonPos(const char* label, const ImVec2& pos, const ImVec2& size = ImVec2(120.0f, 22.0f), bool active = false)
+{
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    const ImVec2 base = window->Pos;
+    const ImVec2 min = ImVec2(std::floor(base.x + pos.x + g_contentOffset.x), std::floor(base.y + pos.y + g_contentOffset.y));
+    return ButtonCore(label, min, size, active);
 }
 
 inline bool ParseHexColor(const char* text, ImVec4& out) {
@@ -666,10 +744,81 @@ inline bool SliderFloat(const char* label, float* value, float min_value, float 
     AddTextWithOutline(draw, font, font_size, plus_pos, plus_col, "+");
 
     char value_text[64];
-    char label_text[128];
+    char prefix_text[128];
     ImFormatString(value_text, IM_ARRAYSIZE(value_text), format, *value);
-    ImFormatString(label_text, IM_ARRAYSIZE(label_text), "%s: %s", text_label, value_text);
-    draw->AddText(font, font_size, ImVec2(origin.x + 1.0f, origin.y - font_size - 5.0f), ColorU32(theme.Text), label_text);
+    ImFormatString(prefix_text, IM_ARRAYSIZE(prefix_text), "%s: ", text_label);
+    const ImVec2 label_pos(origin.x + 1.0f, origin.y - font_size - 5.0f);
+    const ImVec2 prefix_sz = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, prefix_text);
+    const ImVec2 value_sz = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, value_text);
+    const ImVec2 value_pos(label_pos.x + prefix_sz.x, label_pos.y);
+
+    static ImGuiID s_editId = 0;
+    static char s_editBuf[64] = {};
+    static bool s_editFocus = false;
+    const ImVec2 box_pad(5.0f, 2.0f);
+    const float box_w = (std::max)(value_sz.x + box_pad.x * 2.0f, 52.0f);
+    const float box_h = font_size + box_pad.y * 2.0f;
+    const ImVec2 box_min(value_pos.x - box_pad.x, label_pos.y - box_pad.y);
+    const ImVec2 box_max(box_min.x + box_w, box_min.y + box_h);
+    draw->AddText(font, font_size, label_pos, ColorU32(theme.Text), prefix_text);
+    if (s_editId != id)
+    {
+        draw->AddRectFilled(box_min, box_max, ColorU32(theme.ControlBg), 0.0f);
+        draw->AddRect(box_min, box_max, OutlineBlack(), 0.0f, 0, 1.0f);
+        draw->AddRect(box_min + ImVec2(1.0f, 1.0f), box_max - ImVec2(1.0f, 1.0f), OutlineInner(), 0.0f, 0, 1.0f);
+        draw->AddText(font, font_size, ImVec2(box_min.x + box_pad.x, box_min.y + box_pad.y), ColorU32(theme.TextBright), value_text);
+        ImGui::SetCursorScreenPos(box_min);
+        ImGui::InvisibleButton("##slider_edit", box_max - box_min);
+        if (!PopupBlocking() && ImGui::IsItemHovered() &&
+            (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Left)) &&
+            s_editId == 0)
+        {
+            ImFormatString(s_editBuf, IM_ARRAYSIZE(s_editBuf), "%g", (double)*value);
+            s_editId = id;
+            s_editFocus = true;
+        }
+    }
+    else
+    {
+        ImGui::SetCursorScreenPos(box_min);
+        ImGui::SetNextItemWidth(box_w - 4.0f);
+        if (s_editFocus)
+        {
+            ImGui::SetKeyboardFocusHere();
+            s_editFocus = false;
+        }
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 2.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ColorU32(theme.ControlBg));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ColorU32(theme.ControlBg));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ColorU32(theme.ControlBg));
+        ImGui::PushStyleColor(ImGuiCol_Text, ColorU32(theme.TextBright));
+        ImGui::PushStyleColor(ImGuiCol_Border, ColorU32(ImVec4(0.0f, 0.0f, 0.0f, 0.0f)));
+        ImGui::PushStyleColor(ImGuiCol_TextSelectedBg, ColorU32(theme.ControlInactive));
+        bool done = ImGui::InputText("##slider_input", s_editBuf, IM_ARRAYSIZE(s_editBuf),
+                                     ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+        ImGui::PopStyleColor(6);
+        ImGui::PopStyleVar();
+        ImDrawList* fdl = ImGui::GetWindowDrawList();
+        const ImVec2 bmin = ImGui::GetItemRectMin(), bmax = ImGui::GetItemRectMax();
+        fdl->AddRect(bmin, bmax, OutlineBlack(), 0.0f, 0, 1.0f);
+        fdl->AddRect(bmin + ImVec2(1.0f, 1.0f), bmax - ImVec2(1.0f, 1.0f), OutlineInner(), 0.0f, 0, 1.0f);
+        const bool esc = ImGui::IsKeyPressed(ImGuiKey_Escape);
+        if (done)
+        {
+            *value = ImClamp((float)atof(s_editBuf), min_value, max_value);
+            changed = true;
+            s_editId = 0;
+        }
+        else if (esc)
+        {
+            s_editId = 0;
+        }
+        else if ((ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right)) &&
+                 !ImGui::IsItemActive() && !ImGui::IsItemHovered())
+        {
+            s_editId = 0;
+        }
+    }
 
     ImGui::PopID();
     return pressed || changed;

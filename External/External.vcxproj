@@ -30,27 +30,28 @@
     <ClCompile Include="src\core\app\app.cpp" />
     <ClCompile Include="src\core\functions\aim\aim.cpp" />
     <ClCompile Include="src\core\functions\mics\mics.cpp" />
-
     <ClCompile Include="src\core\functions\movement\movement.cpp" />
     <ClCompile Include="src\core\functions\combat\combat.cpp" />
     <ClCompile Include="src\core\features\mesh\cache\MeshCache.cpp" />
     <ClCompile Include="src\core\features\mesh\chams\MeshChams.cpp" />
     <ClCompile Include="src\core\features\mesh\parser\MeshParser.cpp" />
     <ClCompile Include="src\core\features\mesh\shader\MeshDxShader.cpp" />
+    <ClCompile Include="src\core\features\worldgeo\worldgeo.cpp" />
+    <ClCompile Include="src\core\features\preview\preview.cpp" />
     <ClCompile Include="src\core\functions\settings\settings.cpp" />
     <ClCompile Include="src\core\functions\visual\visual.cpp" />
-
     <ClCompile Include="src\core\tp_handler\tp_handler.cpp" />
     <ClCompile Include="src\core\functions\aim\viewport_silent.cpp" />
     <ClCompile Include="src\core\functions\aim\raycast.cpp" />
     <ClCompile Include="src\core\functions\aim\magic.cpp" />
     <ClCompile Include="src\core\functions\explorer\explorer.cpp" />
+    <ClCompile Include="src\core\functions\players_widget.cpp" />
+    <ClCompile Include="src\core\functions\backpack_widget.cpp" />
     <ClCompile Include="src\core\functions\freecam\freecam.cpp" />
     <ClCompile Include="src\core\functions\world\world.cpp" />
     <ClCompile Include="src\core\cache\worldcache.cpp" />
     <ClCompile Include="src\memory\memory.cpp" />
     <ClCompile Include="src\render\render.cpp" />
-
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ext\imgui\imconfig.h" />
@@ -62,19 +63,21 @@
     <ClInclude Include="ext\imgui\imstb_textedit.h" />
     <ClInclude Include="ext\imgui\imstb_truetype.h" />
     <ClInclude Include="src\core\cache\cache.h" />
+    <ClInclude Include="src\core\cache\cb_cache.h" />
+    <ClInclude Include="src\core\cache\pf_cache.h" />
     <ClInclude Include="src\core\functions\aim\fallen_prediction.h" />
     <ClInclude Include="src\core\functions\aim\viewport_silent.h" />
     <ClInclude Include="src\core\functions\aim\raycast.h" />
     <ClInclude Include="src\core\functions\aim\magic.h" />
+    <ClInclude Include="src\core\functions\aim\pf_silent.h" />
+    <ClInclude Include="src\core\functions\players\players.h" />
     <ClInclude Include="src\core\functions\freecam\freecam.h" />
     <ClInclude Include="src\core\functions\world\world.h" />
     <ClInclude Include="src\core\cache\worldcache.h" />
     <ClInclude Include="src\core\cache\workspace.h" />
-
     <ClInclude Include="src\core\app\app.h" />
     <ClInclude Include="src\core\functions\aim\aim.h" />
     <ClInclude Include="src\core\functions\mics\mics.h" />
-
     <ClInclude Include="src\core\keys\keys.h" />
     <ClInclude Include="src\core\functions\movement\movement.h" />
     <ClInclude Include="src\core\functions\combat\combat.h" />
@@ -97,6 +100,9 @@
     <ClInclude Include="src\core\features\mesh\chams\MeshChams.h" />
     <ClInclude Include="src\core\features\mesh\parser\MeshParser.h" />
     <ClInclude Include="src\core\features\mesh\shader\MeshDxShader.h" />
+    <ClInclude Include="src\core\features\worldgeo\worldgeo.h" />
+    <ClInclude Include="src\core\features\preview\preview.h" />
+    <ClInclude Include="src\render\assets\lucide_warn.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>

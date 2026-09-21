@@ -82,7 +82,7 @@ inline constexpr uintptr_t Enabled = 0xB0;
 inline constexpr uintptr_t Size = 0xB8;
 }
 namespace ByteCode {
-inline constexpr uintptr_t Pointer = 0x18; 
+inline constexpr uintptr_t Pointer = 0x18;
 inline constexpr uintptr_t Size = 0x28;
 }
 namespace CachedItem {
@@ -254,6 +254,7 @@ inline constexpr uintptr_t Visible = 0x5AD;
 inline constexpr uintptr_t ZIndex = 0x5A4;
 }
 namespace Highlight {
+inline constexpr uintptr_t SetEnabled = 0x0;
 inline constexpr uintptr_t Adornee = 0xB8;
 inline constexpr uintptr_t DepthMode = 0xE0;
 inline constexpr uintptr_t Effect = 0xF8;
@@ -320,6 +321,7 @@ namespace InputObject {
 inline constexpr uintptr_t MousePosition = 0xD4;
 }
 namespace Instance {
+inline constexpr uintptr_t ParentLocked = 0x70;
 inline constexpr uintptr_t AttributeContainer = 0x40;
 inline constexpr uintptr_t AttributeList = 0x10;
 inline constexpr uintptr_t AttributeToNext = 0x58;
@@ -933,4 +935,9 @@ namespace WorldRoot {
 inline constexpr uintptr_t RaycastBoundDesc = 0x8217310;
 inline constexpr uintptr_t RaycastBoundFn = 0x80;
 }
+namespace GeometryD3D11 { inline constexpr uintptr_t VTableRva = 0x6C80000; }
+namespace FastClusterBinding { inline constexpr uintptr_t VTableRva = 0x6C81000; inline constexpr uintptr_t Owner = 0x18; }
+namespace FastCluster { inline constexpr uintptr_t VTableRva = 0x6C82000; inline constexpr uintptr_t VTableRvaSub = 0x6C82008; inline constexpr uintptr_t BindingSubobject = 0x10; inline constexpr uintptr_t EntityBegin = 0x20; inline constexpr uintptr_t EntityEnd = 0x28; }
+namespace DeviceD3D11Gfx { inline constexpr uintptr_t VTableRva = 0x0; inline constexpr uintptr_t DevicePtr = 0x10; inline constexpr uintptr_t ContextPtr = 0x18; inline constexpr uintptr_t SwapChainPtr = 0x20; inline constexpr uintptr_t ContextObj = 0x28; }
+namespace FFlag { inline constexpr uintptr_t RenderFastClusterOcclusionCulling = 0x0; }
 }

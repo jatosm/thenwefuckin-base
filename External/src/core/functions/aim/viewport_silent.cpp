@@ -47,15 +47,24 @@ namespace ViewportSilent {
     }
     static Vec2i16 calc_viewport(float tx, float ty, float dw, float dh, float mx, float my)
     {
+        constexpr double kMaxShift = 0.65;
         double tyd = (double)ty;
         if (tyd > (double)dh - 1.0) tyd = (double)dh - 1.0;
         if (tyd < 1.0) tyd = 1.0;
         double ratio = (double)my / tyd;
         double vy = (double)dh * ratio;
+        double maxDy = (double)dh * kMaxShift;
+        double rawDy = vy - (double)dh;
+        if (rawDy > maxDy) vy = (double)dh + maxDy;
+        else if (rawDy < -maxDy) vy = (double)dh - maxDy;
         if (vy > 32767.0) vy = 32767.0;
         if (vy < 1.0) vy = 1.0;
         ratio = vy / (double)dh;
         double vx = 2.0 * (double)mx - ratio * (2.0 * (double)tx - (double)dw);
+        double maxDx = (double)dw * kMaxShift;
+        double rawDx = vx - (double)dw;
+        if (rawDx > maxDx) vx = (double)dw + maxDx;
+        else if (rawDx < -maxDx) vx = (double)dw - maxDx;
         if (vx > 32767.0) vx = 32767.0;
         if (vx < 1.0) vx = 1.0;
         return { (std::int16_t)std::lround(vx), (std::int16_t)std::lround(vy) };
@@ -179,8 +188,11 @@ namespace ViewportSilent {
     void Clear()
     {
         g_active.store(false, std::memory_order_release);
-        restore_viewport();
-        g_spoofed.store(false, std::memory_order_release);
+
+        if (g_spoofed.load(std::memory_order_acquire)) {
+            restore_viewport();
+            g_spoofed.store(false, std::memory_order_release);
+        }
     }
     void Shutdown()
     {

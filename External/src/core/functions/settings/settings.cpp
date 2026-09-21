@@ -4,8 +4,11 @@
 #include "settings.h"
 #include "../../variables/variables.h"
 #include "../../../render/menu/library.h"
+#include "../../../render/render.h"
 #include "../aim/fallen_prediction.h"
 #include "../explorer/explorer.h"
+#include "../players_widget.h"
+#include "../backpack_widget.h"
 #include "../../features/mesh/chams/MeshChams.h"
 #include "../../features/mesh/shader/MeshDxShader.h"
 #include <windows.h>
@@ -18,9 +21,31 @@
 
 namespace Settings {
 void RenderAimMenu() {
-    float ay = 46.0f;
+    ImVec2 aBase = ImGui::GetWindowPos();
+    ImVec2 aLMin = aBase + ImVec2(6.0f,40.0f);
+    ImVec2 aLMax = aBase + ImVec2(6.0f+290.0f,40.0f+340.0f);
+    ImVec2 aRMin = aBase + ImVec2(305.0f,40.0f);
+    ImVec2 aRMax = aBase + ImVec2(305.0f+290.0f,40.0f+340.0f);
+    ImVec2 aMp = ImGui::GetIO().MousePos;
+    bool aHoverL = (aMp.x>=aLMin.x && aMp.x<=aLMax.x && aMp.y>=aLMin.y && aMp.y<=aLMax.y) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+    bool aHoverR = (aMp.x>=aRMin.x && aMp.x<=aRMax.x && aMp.y>=aRMin.y && aMp.y<=aRMax.y) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+    static float aimScrollL = 0.f, aimScrollR = 0.f;
+    if (aHoverL) {
+        float wh = ImGui::GetIO().MouseWheel;
+        if (wh!=0.f && !imGuiCustom::PopupBlocking()) aimScrollL -= wh * 22.0f;
+    }
+    if (aHoverR) {
+        float wh = ImGui::GetIO().MouseWheel;
+        if (wh!=0.f && !imGuiCustom::PopupBlocking()) aimScrollR -= wh * 22.0f;
+    }
+    if (aimScrollL < 0.f) aimScrollL = 0.f;
+    if (aimScrollR < 0.f) aimScrollR = 0.f;
+    ImDrawList* aFg = ImGui::GetWindowDrawList();
+    aFg->PushClipRect(aLMin, aLMax, true);
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 0.0f);
+    float ay = 46.0f - aimScrollL;
     imGuiCustom::Checkbox("Enable Aimbot", &variables::Aimbot::enabled, ImVec2(12.0f, ay));
-    imGuiCustom::Keybind("aim_key", &variables::Aimbot::aimbotKey, ImVec2(222.0f, ay - 1.0f), ImVec2(68.0f, 13.0f), nullptr);
+    imGuiCustom::Keybind("aim_key", &variables::Aimbot::aimbotKey, ImVec2(222.0f, ay - 1.0f), ImVec2(68.0f, 13.0f), &variables::Aimbot::aimbotKeyMode);
     ay += imGuiCustom::CheckStep();
     imGuiCustom::Checkbox("Show FOV", &variables::Aimbot::showFOV, ImVec2(12.0f, ay));
     imGuiCustom::ColorSquare("fov_color", &variables::Aimbot::fovColor, ImVec2(264.0f, ay + 1.0f));
@@ -33,7 +58,7 @@ void RenderAimMenu() {
     ay += imGuiCustom::ComboTop();
     imGuiCustom::Combo("aim_target", &variables::Aimbot::aimTarget, targets, 8, ImVec2(12.0f, ay), 158.0f, "Aim Target:");
     ay += imGuiCustom::ComboStep();
-    const char* methods[] = {"Mouse", "Memory", "Viewport", "Raycast"};
+    const char* methods[] = {"Memory", "Viewport", "Raycast", "PF Silent"};
     imGuiCustom::Combo("aim_method", &variables::Aimbot::aimMethod, methods, 4, ImVec2(12.0f, ay + imGuiCustom::ComboTop()), 158.0f, "Aim Method:");
     ay += imGuiCustom::ComboTop() + 22.0f;
     imGuiCustom::Checkbox("Magic Bullet", &variables::Aimbot::magicBullet, ImVec2(12.0f, ay));
@@ -41,6 +66,7 @@ void RenderAimMenu() {
     imGuiCustom::Checkbox("Prediction", &variables::Aimbot::prediction, ImVec2(12.0f, ay));
     ay += imGuiCustom::CheckStep();
     if (variables::Aimbot::prediction) {
+        fallen_update_weapon_auto();
         imGuiCustom::Checkbox("Fallen Prediction##fallen_pred", &variables::Aimbot::fallen_prediction, ImVec2(12.0f, ay));
         ay += imGuiCustom::CheckStep();
         if (variables::Aimbot::fallen_prediction) {
@@ -68,7 +94,9 @@ void RenderAimMenu() {
                     ay += imGuiCustom::CheckStep();
                 }
             }
-            imGuiCustom::SliderFloat("fallen_bv", &variables::Aimbot::fallen_bv_override, 0.0f, 3000.0f, ImVec2(12.0f, ay + imGuiCustom::SliderTop()), 272.0f, "Bullet Vel Override", "%.0f");
+            imGuiCustom::SliderFloat("fallen_bv", &variables::Aimbot::fallen_bv_override, -1.0f, 3000.0f, ImVec2(12.0f, ay + imGuiCustom::SliderTop()), 272.0f, "Bullet Vel Override (-1=auto)", "%.0f");
+            ay += imGuiCustom::SliderTop() + 15.0f;
+            imGuiCustom::SliderFloat("fallen_grav", &variables::Aimbot::fallen_grav_mult, 0.0f, 2.0f, ImVec2(12.0f, ay + imGuiCustom::SliderTop()), 272.0f, "Gravity Mult", "%.2f");
             ay += imGuiCustom::SliderTop() + 15.0f;
         }
     }
@@ -88,9 +116,22 @@ void RenderAimMenu() {
         imGuiCustom::SliderFloat("predline_thick", &variables::Aimbot::predictionLineThickness, 0.5f, 5.0f, ImVec2(12.0f, ay + imGuiCustom::SliderTop()), 272.0f, "Line Thickness", "%.1f");
         ay += imGuiCustom::SliderTop() + 15.0f;
     }
-    float by = 46.0f;
+    float contentL = ay + aimScrollL - 46.0f;
+    float maxScrollL = contentL - 340.0f + 6.0f; if (maxScrollL < 0.f) maxScrollL = 0.f;
+    if (aimScrollL > maxScrollL) aimScrollL = maxScrollL;
+    aFg->PopClipRect();
+    aFg->PushClipRect(aRMin, aRMax, true);
+    float by = 46.0f - aimScrollR;
     imGuiCustom::Checkbox("Visible Check", &variables::Aimbot::visibleCheck, ImVec2(311.0f, by));
     by += imGuiCustom::CheckStep();
+    imGuiCustom::Checkbox("Spread Modifier", &variables::Aimbot::useSpread, ImVec2(311.0f, by));
+    by += imGuiCustom::CheckStep();
+    if (variables::Aimbot::useSpread) {
+        imGuiCustom::SliderFloat("spread_amount", &variables::Aimbot::spreadModifier, 0.0f, 10.0f, ImVec2(311.0f, by + imGuiCustom::SliderTop()), 272.0f, "Spread Amount", "%.2f");
+        by += imGuiCustom::SliderTop() + 15.0f;
+        imGuiCustom::SliderFloat("hit_chance", &variables::Aimbot::hitChance, 0.0f, 100.0f, ImVec2(311.0f, by + imGuiCustom::SliderTop()), 272.0f, "Hit Chance", "%.0f%%");
+        by += imGuiCustom::SliderTop() + 15.0f;
+    }
     imGuiCustom::Checkbox("Deadzone", &variables::Aimbot::useDeadzone, ImVec2(311.0f, by));
     by += imGuiCustom::CheckStep();
     if (variables::Aimbot::useDeadzone) {
@@ -98,7 +139,7 @@ void RenderAimMenu() {
         by += imGuiCustom::SliderTop() + 15.0f;
     }
     imGuiCustom::Checkbox("Triggerbot", &variables::Aimbot::triggerbot, ImVec2(311.0f, by));
-    imGuiCustom::Keybind("trigger_key", &variables::Aimbot::triggerKey, ImVec2(505.0f, by - 1.0f), ImVec2(68.0f, 13.0f), nullptr);
+    imGuiCustom::Keybind("trigger_key", &variables::Aimbot::triggerKey, ImVec2(505.0f, by - 1.0f), ImVec2(68.0f, 13.0f), &variables::Aimbot::triggerKeyMode);
     by += imGuiCustom::CheckStep();
     if (variables::Aimbot::triggerbot) {
         float trigDelayMs = (float)variables::Aimbot::triggerDelay;
@@ -106,16 +147,15 @@ void RenderAimMenu() {
         variables::Aimbot::triggerDelay = (int)trigDelayMs;
         by += imGuiCustom::SliderTop() + 15.0f;
     }
-    imGuiCustom::Checkbox("Rapid Fire", &variables::Aimbot::rapidFire, ImVec2(311.0f, by));
-    by += imGuiCustom::CheckStep();
-    if (variables::Aimbot::rapidFire) {
-        imGuiCustom::SliderFloat("rapid_value", &variables::Aimbot::rapidFireValue, -1.0f, 100.0f, ImVec2(311.0f, by + imGuiCustom::SliderTop()), 272.0f, "Cooldown", "%.3f");
-        by += imGuiCustom::SliderTop() + 15.0f;
-    }
+    float contentR = by + aimScrollR - 46.0f;
+    float maxScrollR = contentR - 340.0f + 6.0f; if (maxScrollR < 0.f) maxScrollR = 0.f;
+    if (aimScrollR > maxScrollR) aimScrollR = maxScrollR;
+    aFg->PopClipRect();
+    ImGui::PopStyleVar();
 }
 
 void RenderVisualMenu() {
-    
+
     ImVec2 vBase = ImGui::GetWindowPos();
     ImVec2 vLMin = vBase + ImVec2(6.0f,40.0f);
     ImVec2 vLMax = vBase + ImVec2(6.0f+290.0f,40.0f+340.0f);
@@ -125,21 +165,22 @@ void RenderVisualMenu() {
         float wh = ImGui::GetIO().MouseWheel;
         if (wh!=0.f && !imGuiCustom::PopupBlocking()) variables::ESP::visualScroll -= wh * 22.0f;
     }
-    
+
     float vContent = 0;
-    vContent += imGuiCustom::CheckStep()*2; 
+    vContent += imGuiCustom::CheckStep()*2;
     if(variables::ESP::boxes){ vContent += imGuiCustom::ComboStep() + imGuiCustom::CheckStep()*2; if(variables::ESP::boxFilled) vContent += imGuiCustom::CheckStep() + (variables::ESP::boxFillGradient?imGuiCustom::CheckStep():0); }
-    vContent += imGuiCustom::CheckStep()*4; 
-    vContent += imGuiCustom::CheckStep(); 
+    vContent += imGuiCustom::CheckStep()*4;
+    vContent += imGuiCustom::CheckStep();
     if(variables::ESP::flags) vContent += imGuiCustom::ComboStep()+imGuiCustom::ComboTop();
-    vContent += imGuiCustom::CheckStep(); 
+    vContent += imGuiCustom::CheckStep();
     if(variables::ESP::headDot) vContent += imGuiCustom::SliderTop()+15.0f;
-    vContent += imGuiCustom::CheckStep(); 
+    vContent += imGuiCustom::CheckStep();
     if(variables::ESP::viewDirection) vContent += imGuiCustom::SliderTop()+15.0f;
-    vContent += imGuiCustom::CheckStep(); 
+    vContent += imGuiCustom::CheckStep();
     if(variables::ESP::skeleton) vContent += imGuiCustom::SliderTop()+15.0f;
     vContent += imGuiCustom::CheckStep();
     if(variables::ESP::meshChams) vContent += (imGuiCustom::ComboStep()+imGuiCustom::ComboTop())*3;
+    vContent += 0;
     vContent += 10;
     float vMaxScroll = vContent - 340.0f + 6.0f; if(vMaxScroll<0) vMaxScroll=0;
     if(variables::ESP::visualScroll<0) variables::ESP::visualScroll=0;
@@ -210,7 +251,6 @@ void RenderVisualMenu() {
         ly += imGuiCustom::SliderTop() + 15.0f;
     }
     imGuiCustom::Checkbox("Mesh Chams", &variables::ESP::meshChams, ImVec2(12.0f, ly));
-    imGuiCustom::ColorSquare("chams_fill_color", &variables::ESP::chamsFillColor, ImVec2(264.0f, ly + 1.0f));
     ly += imGuiCustom::CheckStep();
     if (variables::ESP::meshChams) {
         static int chamsMeshFlat = 0;
@@ -227,17 +267,17 @@ void RenderVisualMenu() {
         ly += imGuiCustom::ComboStep();
         ly += imGuiCustom::ComboTop();
         imGuiCustom::Combo("chams_shaders", &variables::ESP::meshChamsDxMode, Cheat::Visuals::MeshDxShader::ModeNames(), Cheat::Visuals::MeshDxShader::ModeNameCount(), ImVec2(12.0f, ly), 158.0f, "Shaders:");
-        imGuiCustom::ColorSquare("chams_occluded_color", &variables::ESP::meshChamsOccludedColor, ImVec2(264.0f, ly + 1.0f));
         ly += imGuiCustom::ComboStep();
         variables::ESP::meshChamsOccludedDxMode = variables::ESP::meshChamsDxMode;
     }
+
     vFg->PopClipRect();
     ImGui::PopStyleVar();
     float sy = 46.0f;
     imGuiCustom::Checkbox("Dead Check", &variables::ESP::deadCheck, ImVec2(311.0f, sy));
     sy += imGuiCustom::CheckStep();
     imGuiCustom::Checkbox("Local Player", &variables::ESP::localPlayer, ImVec2(311.0f, sy));
-    
+
     {
         ImVec2 base = ImGui::GetWindowPos();
         ImVec2 pMin = base + ImVec2(305.0f + imGuiCustom::g_contentOffset.x, 96.0f + imGuiCustom::g_contentOffset.y);
@@ -250,19 +290,19 @@ void RenderVisualMenu() {
                 variables::World::worldScroll -= wheel * 22.0f;
             }
         }
-        
+
         auto contentH = [&]()->float{
-            float h = 0; h += imGuiCustom::CheckStep(); 
+            float h = 0; h += imGuiCustom::CheckStep();
             if (variables::World::enabled) { h += imGuiCustom::CheckStep() * 2; }
-            h += imGuiCustom::CheckStep(); 
+            h += imGuiCustom::CheckStep();
             if (variables::World::ores) h += imGuiCustom::ComboStep() + imGuiCustom::ComboTop();
-            h += imGuiCustom::CheckStep(); 
+            h += imGuiCustom::CheckStep();
             if (variables::World::plants) h += imGuiCustom::ComboStep() + imGuiCustom::ComboTop();
-            h += imGuiCustom::CheckStep(); 
+            h += imGuiCustom::CheckStep();
             if (variables::World::animals) h += imGuiCustom::ComboStep() + imGuiCustom::ComboTop() + imGuiCustom::CheckStep() * 2;
-            h += imGuiCustom::CheckStep(); 
+            h += imGuiCustom::CheckStep();
             if (variables::World::soldiers) h += imGuiCustom::ComboStep() + imGuiCustom::ComboTop() + imGuiCustom::CheckStep() * 2;
-            h += imGuiCustom::CheckStep(); 
+            h += imGuiCustom::CheckStep();
             if (variables::World::tools) h += imGuiCustom::ComboStep() + imGuiCustom::ComboTop() + imGuiCustom::CheckStep();
             return h + 10.0f;
         }();
@@ -273,9 +313,9 @@ void RenderVisualMenu() {
         ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 0.0f);
         ImDrawList* fg = ImGui::GetWindowDrawList();
         fg->PushClipRect(pMin + ImVec2(1.0f, 1.0f), pMax - ImVec2(1.0f, 1.0f), true);
-        
+
         float wy = 102.0f - variables::World::worldScroll;
-        
+
         ImGui::GetStyle().ScrollbarSize = 0.0f;
         imGuiCustom::Checkbox("Enable world##world_enabled", &variables::World::enabled, ImVec2(311.0f, wy));
         wy += imGuiCustom::CheckStep();
@@ -490,33 +530,17 @@ void RenderSettingsMenu() {
     }
     gy += imGuiCustom::ComboStep();
     {
-        auto menuBtn = [&](const char* id, const char* label, bool& tog) {
-            ImVec2 bp = ImGui::GetWindowPos() + ImVec2(12.0f, gy + imGuiCustom::g_contentOffset.y);
-            ImGui::PushID(id);
-            ImGui::SetCursorScreenPos(bp);
-            ImGui::PushStyleColor(ImGuiCol_Button, imGuiCustom::ColorU32(imGuiCustom::GetTheme().ControlBg));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, imGuiCustom::ColorU32(imGuiCustom::GetTheme().ControlInactive));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, imGuiCustom::ColorU32(imGuiCustom::GetTheme().ControlInactive));
-            ImGui::PushStyleColor(ImGuiCol_Text, imGuiCustom::ColorU32(imGuiCustom::GetTheme().TextBright));
-            bool r = ImGui::Button(label, ImVec2(158.0f, 18.0f));
-            ImDrawList* bdl = ImGui::GetWindowDrawList();
-            const ImVec2 bmin = ImGui::GetItemRectMin(), bmax = ImGui::GetItemRectMax();
-            bdl->AddRect(bmin, bmax, imGuiCustom::OutlineBlack(), 0.0f, 0, 1.0f);
-            bdl->AddRect(bmin + ImVec2(1, 1), bmax - ImVec2(1, 1), imGuiCustom::OutlineInner(), 0.0f, 0, 1.0f);
-            ImGui::PopStyleColor(4);
-            ImGui::PopID();
-            if (r)
-                tog = !tog;
-        };
-        static bool expOpen = false;
-        menuBtn("open_exp", "Explorer", expOpen);
-        if (expOpen)
-            Explorer::SetOpen(true);
-        else
-            Explorer::SetOpen(false);
-        gy += 24.0f;
+        if (imGuiCustom::ButtonPos("Explorer##open_exp", ImVec2(12.0f, gy), ImVec2(158.0f, 20.0f), false))
+            Explorer::SetOpen(!Explorer::IsOpen());
+        gy += 26.0f;
+        if (imGuiCustom::ButtonPos("Players##open_players", ImVec2(12.0f, gy), ImVec2(158.0f, 20.0f), false))
+            PlayersWidget::SetOpen(!PlayersWidget::IsOpen());
+        gy += 26.0f;
+        if (imGuiCustom::ButtonPos("Hotbar##open_back", ImVec2(12.0f, gy), ImVec2(158.0f, 20.0f), false))
+            BackpackWidget::SetOpen(!BackpackWidget::IsOpen());
+        gy += 26.0f;
     }
-    
+
     {
         ImDrawList* cdl = ImGui::GetWindowDrawList();
         ImVec2 base = ImGui::GetWindowPos();
@@ -538,6 +562,7 @@ void RenderSettingsMenu() {
             auto i = [&](const char* k, int v){ o<<k<<"="<<v<<"\n"; };
             auto f = [&](const char* k, float v){ o<<k<<"="<<v<<"\n"; };
             auto c = [&](const char* k, const ImVec4& v){ o<<k<<"="<<v.x<<","<<v.y<<","<<v.z<<","<<v.w<<"\n"; };
+            auto s = [&](const char* k, const std::string& v){ o<<k<<"="<<v<<"\n"; };
             b("teamCheck", variables::teamCheck);
             i("teamCheckKey", variables::teamCheckKey);
             i("teamCheckKeyMode", variables::teamCheckKeyMode);
@@ -549,21 +574,23 @@ void RenderSettingsMenu() {
             i("Aimbot.aimMethod", variables::Aimbot::aimMethod);
             b("Aimbot.magicBullet", variables::Aimbot::magicBullet);
             i("Aimbot.aimbotKey", variables::Aimbot::aimbotKey);
+            i("Aimbot.aimbotKeyMode", variables::Aimbot::aimbotKeyMode);
             c("Aimbot.fovColor", variables::Aimbot::fovColor);
             b("Aimbot.visibleCheck", variables::Aimbot::visibleCheck);
+            b("Aimbot.playerPreview", variables::Aimbot::playerPreview);
             b("Aimbot.useDeadzone", variables::Aimbot::useDeadzone);
             f("Aimbot.deadzone", variables::Aimbot::deadzone);
+            b("Aimbot.useSpread", variables::Aimbot::useSpread);
+            f("Aimbot.spreadModifier", variables::Aimbot::spreadModifier);
+            f("Aimbot.hitChance", variables::Aimbot::hitChance);
             b("Aimbot.triggerbot", variables::Aimbot::triggerbot);
             i("Aimbot.triggerKey", variables::Aimbot::triggerKey);
+            i("Aimbot.triggerKeyMode", variables::Aimbot::triggerKeyMode);
             i("Aimbot.triggerDelay", variables::Aimbot::triggerDelay);
-            b("Aimbot.rapidFire", variables::Aimbot::rapidFire);
-            f("Aimbot.rapidFireValue", variables::Aimbot::rapidFireValue);
             b("Aimbot.prediction", variables::Aimbot::prediction);
             b("Aimbot.fallen_prediction", variables::Aimbot::fallen_prediction);
             f("Aimbot.fallen_bv_override", variables::Aimbot::fallen_bv_override);
             f("Aimbot.fallen_grav_mult", variables::Aimbot::fallen_grav_mult);
-            f("Aimbot.target_velocity_scale", variables::Aimbot::target_velocity_scale);
-            f("Aimbot.target_gravity_comp", variables::Aimbot::target_gravity_comp);
             i("Aimbot.selected_weapon_index", variables::Aimbot::selected_weapon_index);
             b("Aimbot.includeNPC", variables::Aimbot::includeNPC);
             b("Aimbot.silentTracer", variables::Aimbot::silentTracer);
@@ -591,10 +618,10 @@ void RenderSettingsMenu() {
             f("ESP.skeletonThickness", variables::ESP::skeletonThickness);
             b("ESP.skeletonOutline", variables::ESP::skeletonOutline);
             b("ESP.meshChams", variables::ESP::meshChams);
-            i("ESP.meshChamsDxMode", variables::ESP::meshChamsDxMode);
-            i("ESP.meshChamsOccludedDxMode", variables::ESP::meshChamsOccludedDxMode);
             c("ESP.chamsFillColor", variables::ESP::chamsFillColor);
             c("ESP.meshChamsOccludedColor", variables::ESP::meshChamsOccludedColor);
+            i("ESP.meshChamsDxMode", variables::ESP::meshChamsDxMode);
+            i("ESP.meshChamsOccludedDxMode", variables::ESP::meshChamsOccludedDxMode);
             b("ESP.deadCheck", variables::ESP::deadCheck);
             b("ESP.localPlayer", variables::ESP::localPlayer);
             b("ESP.tool", variables::ESP::tool);
@@ -677,6 +704,7 @@ void RenderSettingsMenu() {
             for(int k=0;k<7;++k) b((std::string("World.toolsSel")+std::to_string(k)).c_str(), variables::World::toolsSel[k]);
             for(int k=0;k<7;++k) c((std::string("World.toolsColor")+std::to_string(k)).c_str(), variables::World::toolsColor[k]);
             b("World.toolsBox", variables::World::toolsBox);
+            b("World.wireframe", variables::World::wireframe);
             b("World.clockTimeEnabled", variables::World::clockTimeEnabled);
             f("World.clockTimeValue", variables::World::clockTimeValue);
             b("World.brightnessEnabled", variables::World::brightnessEnabled);
@@ -692,6 +720,12 @@ void RenderSettingsMenu() {
             f("World.exposureValue", variables::World::exposureValue);
             b("World.skyboxEnabled", variables::World::skyboxEnabled);
             i("World.skyboxPreset", variables::World::skyboxPreset);
+            s("World.skyIdBk", variables::World::skyIdBk);
+            s("World.skyIdDn", variables::World::skyIdDn);
+            s("World.skyIdFt", variables::World::skyIdFt);
+            s("World.skyIdLf", variables::World::skyIdLf);
+            s("World.skyIdRt", variables::World::skyIdRt);
+            s("World.skyIdUp", variables::World::skyIdUp);
             b("Freecam.enabled", variables::Freecam::enabled);
             i("Freecam.key", variables::Freecam::key);
             i("Freecam.keyMode", variables::Freecam::keyMode);
@@ -727,9 +761,10 @@ void RenderSettingsMenu() {
                 auto Ic = [&](const char* k, int& v, int lo, int hi){ m[k] = [&v,toI,clampI,lo,hi](const std::string& s){ v = clampI(toI(s),lo,hi); }; };
                 auto F = [&](const char* k, float& v){ m[k] = [&v,toF](const std::string& s){ v = toF(s); }; };
                 auto C = [&](const char* k, ImVec4& v){ m[k] = [&v,toC](const std::string& s){ v = toC(s); }; };
+                auto S = [&](const char* k, std::string& v){ m[k] = [&v](const std::string& s){ v = s; }; };
                 B("teamCheck", variables::teamCheck);
                 I("teamCheckKey", variables::teamCheckKey);
-                I("teamCheckKeyMode", variables::teamCheckKeyMode);
+                Ic("teamCheckKeyMode", variables::teamCheckKeyMode, 0, 2);
                 B("Aimbot.enabled", variables::Aimbot::enabled);
                 B("Aimbot.showFOV", variables::Aimbot::showFOV);
                 F("Aimbot.fovRadius", variables::Aimbot::fovRadius);
@@ -738,21 +773,23 @@ void RenderSettingsMenu() {
                 Ic("Aimbot.aimMethod", variables::Aimbot::aimMethod, 0, 3);
                 B("Aimbot.magicBullet", variables::Aimbot::magicBullet);
                 I("Aimbot.aimbotKey", variables::Aimbot::aimbotKey);
+                Ic("Aimbot.aimbotKeyMode", variables::Aimbot::aimbotKeyMode, 0, 2);
                 C("Aimbot.fovColor", variables::Aimbot::fovColor);
                 B("Aimbot.visibleCheck", variables::Aimbot::visibleCheck);
+                B("Aimbot.playerPreview", variables::Aimbot::playerPreview);
                 B("Aimbot.useDeadzone", variables::Aimbot::useDeadzone);
                 F("Aimbot.deadzone", variables::Aimbot::deadzone);
+                B("Aimbot.useSpread", variables::Aimbot::useSpread);
+                F("Aimbot.spreadModifier", variables::Aimbot::spreadModifier);
+                F("Aimbot.hitChance", variables::Aimbot::hitChance);
                 B("Aimbot.triggerbot", variables::Aimbot::triggerbot);
                 I("Aimbot.triggerKey", variables::Aimbot::triggerKey);
+                Ic("Aimbot.triggerKeyMode", variables::Aimbot::triggerKeyMode, 0, 2);
                 I("Aimbot.triggerDelay", variables::Aimbot::triggerDelay);
-                B("Aimbot.rapidFire", variables::Aimbot::rapidFire);
-                F("Aimbot.rapidFireValue", variables::Aimbot::rapidFireValue);
                 B("Aimbot.prediction", variables::Aimbot::prediction);
                 B("Aimbot.fallen_prediction", variables::Aimbot::fallen_prediction);
                 F("Aimbot.fallen_bv_override", variables::Aimbot::fallen_bv_override);
                 F("Aimbot.fallen_grav_mult", variables::Aimbot::fallen_grav_mult);
-                F("Aimbot.target_velocity_scale", variables::Aimbot::target_velocity_scale);
-                F("Aimbot.target_gravity_comp", variables::Aimbot::target_gravity_comp);
                 I("Aimbot.selected_weapon_index", variables::Aimbot::selected_weapon_index);
                 B("Aimbot.includeNPC", variables::Aimbot::includeNPC);
                 B("Aimbot.silentTracer", variables::Aimbot::silentTracer);
@@ -780,10 +817,10 @@ void RenderSettingsMenu() {
                 F("ESP.skeletonThickness", variables::ESP::skeletonThickness);
                 B("ESP.skeletonOutline", variables::ESP::skeletonOutline);
                 B("ESP.meshChams", variables::ESP::meshChams);
-                Ic("ESP.meshChamsDxMode", variables::ESP::meshChamsDxMode, 0, 16);
-                Ic("ESP.meshChamsOccludedDxMode", variables::ESP::meshChamsOccludedDxMode, 0, 16);
                 C("ESP.chamsFillColor", variables::ESP::chamsFillColor);
                 C("ESP.meshChamsOccludedColor", variables::ESP::meshChamsOccludedColor);
+                Ic("ESP.meshChamsDxMode", variables::ESP::meshChamsDxMode, 0, 16);
+                Ic("ESP.meshChamsOccludedDxMode", variables::ESP::meshChamsOccludedDxMode, 0, 16);
                 B("ESP.deadCheck", variables::ESP::deadCheck);
                 B("ESP.localPlayer", variables::ESP::localPlayer);
                 B("ESP.tool", variables::ESP::tool);
@@ -799,16 +836,16 @@ void RenderSettingsMenu() {
                 B("Local.jumpEnabled", variables::Local::jumpEnabled);
                 F("Local.jumpPower", variables::Local::jumpPower);
                 I("Local.jumpKey", variables::Local::jumpKey);
-                I("Local.jumpKeyMode", variables::Local::jumpKeyMode);
+                Ic("Local.jumpKeyMode", variables::Local::jumpKeyMode, 0, 2);
                 B("Misc.streamProof", variables::Misc::streamProof);
                 I("Misc.streamKey", variables::Misc::streamKey);
-                I("Misc.streamKeyMode", variables::Misc::streamKeyMode);
+                Ic("Misc.streamKeyMode", variables::Misc::streamKeyMode, 0, 2);
                 B("Misc.watermark", variables::Misc::watermark);
                 I("Misc.watermarkKey", variables::Misc::watermarkKey);
-                I("Misc.watermarkKeyMode", variables::Misc::watermarkKeyMode);
+                Ic("Misc.watermarkKeyMode", variables::Misc::watermarkKeyMode, 0, 2);
                 B("Misc.keybinds", variables::Misc::keybinds);
                 I("Misc.keybindsKey", variables::Misc::keybindsKey);
-                I("Misc.keybindsKeyMode", variables::Misc::keybindsKeyMode);
+                Ic("Misc.keybindsKeyMode", variables::Misc::keybindsKeyMode, 0, 2);
                 B("Misc.vsync", variables::Misc::vsync);
                 I("Misc.fpsLimit", variables::Misc::fpsLimit);
                 Ic("Misc.priority", variables::Misc::priority, 0, 3);
@@ -820,22 +857,22 @@ void RenderSettingsMenu() {
                 F("Misc.espFontSize", variables::Misc::espFontSize);
                 B("Movement.fov", variables::Movement::fov);
                 I("Movement.fovKey", variables::Movement::fovKey);
-                I("Movement.fovKeyMode", variables::Movement::fovKeyMode);
+                Ic("Movement.fovKeyMode", variables::Movement::fovKeyMode, 0, 2);
                 F("Movement.fovValue", variables::Movement::fovValue);
                 B("Movement.fly", variables::Movement::fly);
                 I("Movement.flyKey", variables::Movement::flyKey);
-                I("Movement.flyKeyMode", variables::Movement::flyKeyMode);
+                Ic("Movement.flyKeyMode", variables::Movement::flyKeyMode, 0, 2);
                 I("Movement.flyMethod", variables::Movement::flyMethod);
                 F("Movement.flySpeed", variables::Movement::flySpeed);
                 F("Movement.flyVerticalBoost", variables::Movement::flyVerticalBoost);
                 F("Movement.flyDamping", variables::Movement::flyDamping);
                 B("Movement.noclip", variables::Movement::noclip);
                 I("Movement.noclipKey", variables::Movement::noclipKey);
-                I("Movement.noclipKeyMode", variables::Movement::noclipKeyMode);
+                Ic("Movement.noclipKeyMode", variables::Movement::noclipKeyMode, 0, 2);
                 Ic("Movement.noclipMode", variables::Movement::noclipMode, 0, 1);
                 B("Movement.bunnyHop", variables::Movement::bunnyHop);
                 I("Movement.bunnyHopKey", variables::Movement::bunnyHopKey);
-                I("Movement.bunnyHopKeyMode", variables::Movement::bunnyHopKeyMode);
+                Ic("Movement.bunnyHopKeyMode", variables::Movement::bunnyHopKeyMode, 0, 2);
                 F("Movement.bunnyHopSpeed", variables::Movement::bunnyHopSpeed);
                 B("Movement.hipHeight", variables::Movement::hipHeight);
                 F("Movement.hipHeightValue", variables::Movement::hipHeightValue);
@@ -855,6 +892,7 @@ void RenderSettingsMenu() {
                 C("World.innocentColor", variables::World::innocentColor);
                 B("World.tools", variables::World::tools);
                 B("World.toolsBox", variables::World::toolsBox);
+                B("World.wireframe", variables::World::wireframe);
                 B("World.clockTimeEnabled", variables::World::clockTimeEnabled);
                 F("World.clockTimeValue", variables::World::clockTimeValue);
                 B("World.brightnessEnabled", variables::World::brightnessEnabled);
@@ -869,10 +907,16 @@ void RenderSettingsMenu() {
                 B("World.exposureEnabled", variables::World::exposureEnabled);
                 F("World.exposureValue", variables::World::exposureValue);
                 B("World.skyboxEnabled", variables::World::skyboxEnabled);
-                I("World.skyboxPreset", variables::World::skyboxPreset);
+                Ic("World.skyboxPreset", variables::World::skyboxPreset, 0, 1);
+                S("World.skyIdBk", variables::World::skyIdBk);
+                S("World.skyIdDn", variables::World::skyIdDn);
+                S("World.skyIdFt", variables::World::skyIdFt);
+                S("World.skyIdLf", variables::World::skyIdLf);
+                S("World.skyIdRt", variables::World::skyIdRt);
+                S("World.skyIdUp", variables::World::skyIdUp);
                 B("Freecam.enabled", variables::Freecam::enabled);
                 I("Freecam.key", variables::Freecam::key);
-                I("Freecam.keyMode", variables::Freecam::keyMode);
+                Ic("Freecam.keyMode", variables::Freecam::keyMode, 0, 2);
                 F("Freecam.sensitivity", variables::Freecam::sensitivity);
                 F("Freecam.speed", variables::Freecam::speed);
                 I("Freecam.shiftKey", variables::Freecam::shiftKey);
@@ -933,7 +977,7 @@ void RenderSettingsMenu() {
             idl->AddRect(bmin+ImVec2(1,1), bmax-ImVec2(1,1), imGuiCustom::OutlineInner(), 0.0f, 0, 1.0f);
         }
         gy += 24.0f;
-        
+
         {
             static std::vector<std::string> cfgFiles;
             static std::vector<const char*> cfgPtrs;
@@ -966,33 +1010,36 @@ void RenderSettingsMenu() {
             }
         }
         auto cfgBtn = [&](const char* label, ImVec2 off){
-            ImVec2 p = base + off + imGuiCustom::g_contentOffset;
-            ImGui::SetCursorScreenPos(p);
-            ImGui::PushStyleColor(ImGuiCol_Button, imGuiCustom::ColorU32(imGuiCustom::GetTheme().ControlBg));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, imGuiCustom::ColorU32(imGuiCustom::GetTheme().ControlInactive));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, imGuiCustom::ColorU32(imGuiCustom::GetTheme().ControlInactive));
-            ImGui::PushStyleColor(ImGuiCol_Text, imGuiCustom::ColorU32(imGuiCustom::GetTheme().TextBright));
-            bool r = ImGui::Button(label, ImVec2(75.0f,18.0f));
-            ImDrawList* bdl = ImGui::GetWindowDrawList(); ImVec2 bmin=ImGui::GetItemRectMin(), bmax=ImGui::GetItemRectMax();
-            bdl->AddRect(bmin,bmax,imGuiCustom::OutlineBlack(),0.0f,0,1.0f); bdl->AddRect(bmin+ImVec2(1,1),bmax-ImVec2(1,1),imGuiCustom::OutlineInner(),0.0f,0,1.0f);
-            ImGui::PopStyleColor(4);
-            return r;
+            return imGuiCustom::ButtonPos(label, off, ImVec2(75.0f, 20.0f));
         };
         std::string path = getDesktop() + std::string(cfgName) + ".config";
         if(cfgBtn("Save", ImVec2(12.0f, gy))){
-            std::ofstream f(path); f<<buildStr(); printf("[Config] saved %s\n", path.c_str());
+            std::ofstream f(path); f<<buildStr();
         }
         if(cfgBtn("Load", ImVec2(95.0f, gy))){
-            std::ifstream f(path); if(f){ std::stringstream ss; ss<<f.rdbuf(); parseStr(ss.str()); printf("[Config] loaded %s\n", path.c_str()); } else printf("[Config] not found %s\n", path.c_str());
+            std::ifstream f(path); if(f){ std::stringstream ss; ss<<f.rdbuf(); parseStr(ss.str()); }
         }
         gy += 22.0f;
         if(cfgBtn("Export", ImVec2(12.0f, gy))){
-            ImGui::SetClipboardText(buildStr().c_str()); printf("[Config] exported to clipboard\n");
+            ImGui::SetClipboardText(buildStr().c_str());
         }
         if(cfgBtn("Import", ImVec2(95.0f, gy))){
-            const char* cb = ImGui::GetClipboardText(); if(cb){ parseStr(std::string(cb)); printf("[Config] imported from clipboard\n"); }
+            const char* cb = ImGui::GetClipboardText(); if(cb){ parseStr(std::string(cb)); }
         }
         gy += 26.0f;
+    }
+
+    {
+        ImDrawList* edl = ImGui::GetWindowDrawList();
+        ImVec2 base = ImGui::GetWindowPos();
+        ImTextureID warn = OverlayWarnIcon();
+        const float iconSz = 14.0f;
+        if (warn)
+            edl->AddImage(warn, ImVec2(base.x + 12.0f, base.y + gy + 1.0f), ImVec2(base.x + 12.0f + iconSz, base.y + gy + 1.0f + iconSz), ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 70, 70, 255));
+        imGuiCustom::Checkbox("Wireframe##settings_wireframe", &variables::World::wireframe, ImVec2(warn ? 30.0f : 12.0f, gy));
+        gy += imGuiCustom::CheckStep();
+        imGuiCustom::Checkbox("Player Preview", &variables::Aimbot::playerPreview, ImVec2(12.0f, gy));
+        gy += imGuiCustom::CheckStep();
     }
     float hy = 46.0f;
     imGuiCustom::SliderFloat("menu_font", &variables::Misc::menuFontSize, 0.8f, 1.5f, ImVec2(311.0f, hy + imGuiCustom::SliderTop()), 272.0f, "Menu Font Size", "%.2f");
@@ -1023,12 +1070,7 @@ void RenderSettingsMenu() {
     themeRow("theme_accent", "Accent", &variables::Theme::accent);
     themeRow("theme_text", "Text", &variables::Theme::text);
     themeRow("theme_textbright", "Text Bright", &variables::Theme::textBright);
-    ImGui::SetCursorScreenPos(ImGui::GetWindowPos() + ImVec2(311.0f, ty));
-    ImGui::PushStyleColor(ImGuiCol_Button, imGuiCustom::ColorU32(imGuiCustom::GetTheme().ControlBg));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, imGuiCustom::ColorU32(imGuiCustom::GetTheme().ControlInactive));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, imGuiCustom::ColorU32(imGuiCustom::GetTheme().ControlInactive));
-    ImGui::PushStyleColor(ImGuiCol_Text, imGuiCustom::ColorU32(imGuiCustom::GetTheme().TextBright));
-    if (ImGui::Button("Reset Theme", ImVec2(158.0f, 18.0f))) {
+    if (imGuiCustom::ButtonPos("Reset Theme##reset_th", ImVec2(311.0f, ty), ImVec2(158.0f, 20.0f))) {
         variables::Theme::background = ImVec4(0.1176f, 0.1176f, 0.1176f, 1.0f);
         variables::Theme::panels = ImVec4(0.1529f, 0.1529f, 0.1529f, 1.0f);
         variables::Theme::controls = ImVec4(0.1843f, 0.1843f, 0.1843f, 1.0f);
@@ -1036,13 +1078,5 @@ void RenderSettingsMenu() {
         variables::Theme::text = ImVec4(0.7600f, 0.7600f, 0.7600f, 1.0f);
         variables::Theme::textBright = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
     }
-    {
-        ImDrawList* bdl = ImGui::GetWindowDrawList();
-        const ImVec2 bmin = ImGui::GetItemRectMin();
-        const ImVec2 bmax = ImGui::GetItemRectMax();
-        bdl->AddRect(bmin, bmax, imGuiCustom::OutlineBlack(), 0.0f, 0, 1.0f);
-        bdl->AddRect(bmin + ImVec2(1.0f, 1.0f), bmax - ImVec2(1.0f, 1.0f), imGuiCustom::OutlineInner(), 0.0f, 0, 1.0f);
-    }
-    ImGui::PopStyleColor(4);
 }
 }

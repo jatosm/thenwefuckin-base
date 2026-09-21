@@ -534,7 +534,6 @@ unsigned g_height = 0;
 bool     g_frame_valid = false;
 Vector3  g_camera{};
 
-
 bool    g_bounds_valid = false;
 float   g_minx = 0.f, g_miny = 0.f, g_maxx = 0.f, g_maxy = 0.f;
 bool    g_bounds_fullscreen = false;
@@ -1048,14 +1047,7 @@ void BeginFrame(const Matrix4x4& view, const Vector3& camera, float time)
 	g_cbdata.fresnel_power = 2.5f;
 	g_cbdata.occlusion_enabled = 0;
 
-	std::memcpy(g_cbdata.outline_color, &variables::ESP::meshChamsOutlineColor, sizeof(g_cbdata.outline_color));
-	g_cbdata.outline_fade = variables::ESP::meshChamsOutlineFade;
-	if (g_cbdata.outline_fade < 0.35f) g_cbdata.outline_fade = 0.35f;
-	if (g_cbdata.outline_fade > 2.f) g_cbdata.outline_fade = 2.f;
-	g_cbdata.outline_style = variables::ESP::meshChamsOutlineStyle;
-	if (g_cbdata.outline_style < 0) g_cbdata.outline_style = 0;
-	if (g_cbdata.outline_style > 3) g_cbdata.outline_style = 3;
-	g_cbdata.outline_enabled = variables::ESP::meshChamsOutline ? 1 : 0;
+	g_cbdata.outline_enabled = 0;
 	g_cbdata.glow_strength = 0.f;
 }
 
@@ -1165,7 +1157,6 @@ void Flush(ID3D11RenderTargetView* rtv)
 		return;
 	}
 
-
 	if (!g_bounds_valid)
 	{
 		g_queue.clear();
@@ -1200,8 +1191,6 @@ void Flush(ID3D11RenderTargetView* rtv)
 	}
 
 	const bool want_occ = g_cbdata.occlusion_enabled != 0 && g_world_dsv && g_world_srv && g_unit_cube.vb;
-
-
 
 	D3D11_VIEWPORT vp{
 		0.f, 0.f, (float)g_width, (float)g_height, 0.f, 1.f
@@ -1238,43 +1227,6 @@ void Flush(ID3D11RenderTargetView* rtv)
 			Issue(*item.mesh, item.world);
 	}
 
-	const bool want_outline =
-		g_cbdata.outline_enabled != 0 && g_cham_srv && g_vs_fs && g_ps_outline;
-	if (want_outline)
-	{
-		g_context->RSSetState(g_raster);
-		ID3D11RenderTargetView* null_rtv[1]{ nullptr };
-		g_context->OMSetRenderTargets(1, null_rtv, nullptr);
-
-		ID3D11ShaderResourceView* srvs[2]{
-			g_cham_srv,
-			g_cham_srv
-		};
-		g_context->PSSetShaderResources(0, 2, srvs);
-
-		g_context->OMSetRenderTargets(1, &rtv, nullptr);
-		g_context->OMSetDepthStencilState(g_ds_off, 0);
-		g_context->OMSetBlendState(g_blend, bf, 0xFFFFFFFFu);
-		g_context->VSSetShader(g_vs_fs, nullptr, 0);
-		g_context->PSSetShader(g_ps_outline, nullptr, 0);
-		g_context->IASetInputLayout(nullptr);
-		g_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-		D3D11_MAPPED_SUBRESOURCE ms{};
-		if (SUCCEEDED(g_context->Map(g_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms)))
-		{
-			std::memcpy(ms.pData, &g_cbdata, sizeof(g_cbdata));
-			g_context->Unmap(g_cb, 0);
-		}
-		g_context->Draw(3, 0);
-
-		ID3D11ShaderResourceView* null2[2]{ nullptr, nullptr };
-		g_context->PSSetShaderResources(0, 2, null2);
-		g_context->VSSetShader(g_vs, nullptr, 0);
-		g_context->IASetInputLayout(g_layout);
-		g_context->OMSetDepthStencilState(g_ds, 0);
-	}
-	else
 	{
 		ID3D11ShaderResourceView* null_srv2[1]{ nullptr };
 		g_context->PSSetShaderResources(0, 1, null_srv2);

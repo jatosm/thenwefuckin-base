@@ -1,4 +1,4 @@
-#ifndef IMGUI_DEFINE_MATH_OPERATORS
+﻿#ifndef IMGUI_DEFINE_MATH_OPERATORS
 #define IMGUI_DEFINE_MATH_OPERATORS
 #endif
 #include "explorer.h"
@@ -19,7 +19,9 @@
 
 #include <d3d11.h>
 #include <Windows.h>
+#include <winhttp.h>
 #include <algorithm>
+#pragma comment(lib, "winhttp.lib")
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -242,7 +244,6 @@ void TriggerSearch(const std::string& query, int filter_idx) {
             for (auto it = ec.childAddrs.rbegin(); it != ec.childAddrs.rend(); ++it)
                 stack.push_back(*it);
             if (addr == Globals::dataModel.Addr && Globals::workspace.Addr) {
-                
                 std::vector<uintptr_t> rest;
                 std::vector<uintptr_t> wsv;
                 rest.reserve(stack.size());
@@ -336,8 +337,191 @@ void DumpAll() {
         }
         std::fprintf(f, "\nTotal: %zu instances\n", count);
         std::fclose(f);
-        printf("[Explorer] dumped %zu instances to %s\n", count, path.c_str());
         s_dumping.store(false);
+    }).detach();
+}
+
+std::atomic<bool> s_imgDumping{ false };
+std::atomic<int> s_imgDone{ 0 };
+std::atomic<int> s_imgTotal{ 0 };
+
+std::string ReadImgStr(std::uintptr_t addr, std::uintptr_t off) {
+    if (!addr) return {};
+    for (std::uintptr_t o : {off, off + 8, off - 8, off + 0x10, off - 0x10}) {
+        std::string s = memory->read_string(addr + o);
+        if (!s.empty() && s.find("rbxassetid://") != std::string::npos) return s;
+        std::uintptr_t ptr = memory->read<std::uintptr_t>(addr + o);
+        if (ptr) {
+            s = memory->read_string(ptr);
+            if (!s.empty() && s.find("rbxassetid://") != std::string::npos) return s;
+        }
+    }
+    return {};
+}
+
+std::string ImgHttpGet(const std::wstring& host, const std::wstring& path) {
+    std::string out;
+    HINTERNET hS = WinHttpOpen(L"jatos/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, nullptr, nullptr, 0);
+    if (!hS) return out;
+    HINTERNET hC = WinHttpConnect(hS, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
+    if (!hC) { WinHttpCloseHandle(hS); return out; }
+    HINTERNET hR = WinHttpOpenRequest(hC, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+    if (!hR) { WinHttpCloseHandle(hC); WinHttpCloseHandle(hS); return out; }
+    if (!WinHttpSendRequest(hR, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)) { WinHttpCloseHandle(hR); WinHttpCloseHandle(hC); WinHttpCloseHandle(hS); return out; }
+    if (!WinHttpReceiveResponse(hR, nullptr)) { WinHttpCloseHandle(hR); WinHttpCloseHandle(hC); WinHttpCloseHandle(hS); return out; }
+    std::vector<char> buf;
+    for (;;) {
+        DWORD avail = 0;
+        if (!WinHttpQueryDataAvailable(hR, &avail)) break;
+        if (!avail) break;
+        size_t old = buf.size();
+        buf.resize(old + avail);
+        DWORD rd = 0;
+        if (!WinHttpReadData(hR, buf.data() + old, avail, &rd)) break;
+        buf.resize(old + rd);
+        if (!rd) break;
+    }
+    out.assign(buf.begin(), buf.end());
+    WinHttpCloseHandle(hR); WinHttpCloseHandle(hC); WinHttpCloseHandle(hS);
+    return out;
+}
+
+std::string ImgAssetUrl(const std::string& json) {
+    auto p = json.find("imageUrl");
+    if (p == std::string::npos) return {};
+    auto q = json.find("http", p);
+    if (q == std::string::npos) return {};
+    auto e = json.find('"', q);
+    if (e == std::string::npos) e = json.size();
+    std::string url = json.substr(q, e - q);
+    size_t pos = url.find("\\u0026");
+    while (pos != std::string::npos) { url.replace(pos, 6, "&"); pos = url.find("\\u0026", pos + 1); }
+    return url;
+}
+
+void DumpImages() {
+    if (s_imgDumping.exchange(true))
+        return;
+    std::thread([]() {
+        char* up = nullptr;
+        size_t len = 0;
+        _dupenv_s(&up, &len, "USERPROFILE");
+        std::string desk = up ? std::string(up) : std::string("C:\\Users\\Public");
+        if (up) free(up);
+        std::string dir = desk + "\\Desktop\\fallenimages\\";
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        struct Found { std::string id; std::string name; };
+        std::vector<Found> items;
+        std::unordered_map<std::string, bool> seen;
+        const auto root = Globals::dataModel.Addr;
+        std::vector<std::uintptr_t> stack;
+        if (root) stack.push_back(root);
+        std::size_t vis = 0;
+        std::size_t labelCount = 0;
+        std::size_t emptyCount = 0;
+        const std::size_t kCap = 300000;
+        while (!stack.empty() && vis < kCap && items.size() < 5000) {
+            std::uintptr_t addr = stack.back();
+            stack.pop_back();
+            vis++;
+            RBX::RbxInstance inst(addr);
+            std::string cls = inst.GetClass();
+            std::string asset;
+            if (cls == "ImageLabel" || cls == "ImageButton" || cls == "Decal" || cls == "Texture") {
+                labelCount++;
+                if (cls == "Decal" || cls == "Texture")
+                    asset = ReadImgStr(addr, 0x1E0);
+                else
+                    asset = ReadImgStr(addr, 0x988);
+                if (asset.empty()) emptyCount++;
+            }
+            if (!asset.empty()) {
+                std::string id = asset;
+                if (id.rfind("rbxassetid://", 0) == 0) id = id.substr(13);
+                auto at = id.find_first_not_of("0123456789");
+                if (at != std::string::npos) id = id.substr(0, at);
+                if (!id.empty() && !seen[id]) {
+                    seen[id] = true;
+                    std::string nm = inst.GetName();
+                    if (nm.empty()) nm = cls;
+                    items.push_back({id, nm});
+                }
+            }
+            auto kids = inst.GetChildList();
+            for (auto it = kids.rbegin(); it != kids.rend(); ++it) {
+                if (it->Addr && vis + stack.size() < kCap)
+                    stack.push_back(it->Addr);
+            }
+        }
+        (void)vis; (void)labelCount; (void)emptyCount;
+        s_imgTotal.store((int)items.size());
+        s_imgDone.store(0);
+        FILE* idx = nullptr;
+        fopen_s(&idx, (dir + "images_index.txt").c_str(), "w");
+        int done = 0, fail = 0;
+        std::unordered_map<std::string, int> nameCount;
+        auto assetState = [](const std::string& json) -> std::string {
+            auto p = json.find("\"state\"");
+            if (p == std::string::npos) return "no-state";
+            auto q = json.find('"', p + 7);
+            if (q == std::string::npos) return "bad-state";
+            auto e = json.find('"', q + 1);
+            if (e == std::string::npos) return "bad-state";
+            return json.substr(q + 1, e - q - 1);
+        };
+        for (auto& it : items) {
+            std::wstring q = L"/v1/assets?assetIds=" + std::wstring(it.id.begin(), it.id.end()) + L"&size=420x420&format=Png";
+            std::string json = ImgHttpGet(L"thumbnails.roblox.com", q);
+            std::string imgUrl = ImgAssetUrl(json);
+            if (imgUrl.empty()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                json = ImgHttpGet(L"thumbnails.roblox.com", q);
+                imgUrl = ImgAssetUrl(json);
+            }
+            if (imgUrl.empty()) {
+                fail++;
+                if (idx) fprintf(idx, "FAIL %s %s no-url state=%s jsonlen=%zu\n", it.id.c_str(), it.name.c_str(), assetState(json).c_str(), json.size());
+                s_imgDone.store(done + fail);
+                continue;
+            }
+            std::string tmp = imgUrl;
+            if (tmp.rfind("https://", 0) == 0) tmp = tmp.substr(8);
+            else if (tmp.rfind("http://", 0) == 0) tmp = tmp.substr(7);
+            std::string host, path;
+            auto sl = tmp.find('/');
+            if (sl != std::string::npos) { host = tmp.substr(0, sl); path = tmp.substr(sl); }
+            else { host = tmp; path = "/"; }
+            std::string data = ImgHttpGet(std::wstring(host.begin(), host.end()), std::wstring(path.begin(), path.end()));
+            if (data.size() < 100) {
+                fail++;
+                if (idx) fprintf(idx, "FAIL %s %s no-data bytes=%zu\n", it.id.c_str(), it.name.c_str(), data.size());
+                s_imgDone.store(done + fail);
+                continue;
+            }
+            std::string safe;
+            for (char c : it.name) {
+                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') safe.push_back(c);
+                else if (c == ' ') safe.push_back('_');
+                if (safe.size() >= 48) break;
+            }
+            if (safe.empty()) safe = "image";
+            int n = nameCount[safe + "_" + it.id]++;
+            std::string fname = safe + "_" + it.id + (n ? "_" + std::to_string(n) : "") + ".png";
+            FILE* f = nullptr;
+            fopen_s(&f, (dir + fname).c_str(), "wb");
+            if (f) {
+                fwrite(data.data(), 1, data.size(), f); fclose(f); done++;
+                if (idx) fprintf(idx, "OK %s %s %s\n", it.id.c_str(), it.name.c_str(), fname.c_str());
+            } else {
+                fail++;
+                if (idx) fprintf(idx, "FAIL %s %s save-fail\n", it.id.c_str(), it.name.c_str());
+            }
+            s_imgDone.store(done + fail);
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        if (idx) fclose(idx);
+        s_imgDumping.store(false);
     }).detach();
 }
 
@@ -405,7 +589,7 @@ void ThemedInput(const char* id, char* buf, std::size_t cap, const ImVec2& size,
     ImGui::PopID();
 }
 
-} 
+}
 
 void SetOpen(bool open) {
     g_open = open;
@@ -426,7 +610,7 @@ void RenderWindow(ID3D11Device* device) {
         : ImGui::GetFont();
     const float fs = 12.f * imGuiCustom::g_fontScale;
 
-    ImGui::SetNextWindowSize(ImVec2(640.f, 480.f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(640.f, 480.f), ImGuiCond_Always);
     {
         ImVec2 pos(700.f, 80.f);
         ImGuiWindow* mainW = ImGui::FindWindowByName("jatos");
@@ -446,7 +630,7 @@ void RenderWindow(ID3D11Device* device) {
         ImGui::SetNextWindowPos(pos, ImGuiCond_FirstUseEver);
     }
     if (!ImGui::Begin("##explorer", nullptr,
-            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
             ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End();
         return;
@@ -588,7 +772,7 @@ void RenderWindow(ID3D11Device* device) {
             const std::string selCls = selected.GetClass();
             const std::uint64_t va = selected.Addr + Offsets::Misc::Value;
             ImGui::TextDisabled("Value");
-            
+
             auto themedSlider = [&](const char* id, float* fv, float lo, float hi, const char* label, const char* fmt) {
                 ImVec2 wpos = ImGui::GetWindowPos();
                 ImVec2 cur = ImGui::GetCursorScreenPos();
@@ -711,9 +895,32 @@ void RenderWindow(ID3D11Device* device) {
             ddl->AddRect(dmin + ImVec2(1, 1), dmax - ImVec2(1, 1), imGuiCustom::OutlineInner(), 0.f, 0, 1.f);
             ImGui::PopStyleColor(4);
             ImGui::PopID();
+            bool doImgs = false;
+            ImGui::PushID("exp_images");
+            ImGui::SetCursorScreenPos(ImVec2(px, py + 26.f));
+            ImGui::PushStyleColor(ImGuiCol_Button, imGuiCustom::ColorU32(theme.ControlBg));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, imGuiCustom::ColorU32(theme.ControlInactive));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, imGuiCustom::ColorU32(theme.ControlInactive));
+            ImGui::PushStyleColor(ImGuiCol_Text, imGuiCustom::ColorU32(theme.TextBright));
+            char imgsLabel[32];
+            if (s_imgDumping.load() && s_imgTotal.load() > 0)
+                snprintf(imgsLabel, sizeof(imgsLabel), "Images %d/%d", s_imgDone.load(), s_imgTotal.load());
+            else if (s_imgDumping.load())
+                snprintf(imgsLabel, sizeof(imgsLabel), "Images...");
+            else
+                snprintf(imgsLabel, sizeof(imgsLabel), "Images");
+            doImgs = ImGui::Button(imgsLabel, ImVec2(pw, 20.f));
+            ImDrawList* idl = ImGui::GetWindowDrawList();
+            const ImVec2 imin = ImGui::GetItemRectMin(), imax = ImGui::GetItemRectMax();
+            idl->AddRect(imin, imax, imGuiCustom::OutlineBlack(), 0.f, 0, 1.f);
+            idl->AddRect(imin + ImVec2(1, 1), imax - ImVec2(1, 1), imGuiCustom::OutlineInner(), 0.f, 0, 1.f);
+            ImGui::PopStyleColor(4);
+            ImGui::PopID();
             if (doDump)
                 DumpAll();
-            ImGui::SetCursorScreenPos(ImVec2(px, py + 26.f));
+            if (doImgs)
+                DumpImages();
+            ImGui::SetCursorScreenPos(ImVec2(px, py + 52.f));
             ImGui::Dummy(ImVec2(1, 1));
         }
     }
@@ -722,4 +929,4 @@ void RenderWindow(ID3D11Device* device) {
     ImGui::End();
 }
 
-} 
+}

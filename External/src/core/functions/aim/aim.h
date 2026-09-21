@@ -13,10 +13,15 @@ inline std::uintptr_t lockedPlayerAddr = 0;
 inline RBX::Vec2 lastTarget{0.0f, 0.0f};
 inline bool hasTarget = false;
 
+inline bool aimActiveCached = false;
+inline bool trigActiveCached = false;
+
 void MoveMouse(float x, float y);
 void AutoClick();
 float GetDistance2D(const RBX::Vec2& a, const RBX::Vec2& b);
 bool IsAimKeyDown(int vk);
+
+bool AimKeyActive(int key, int mode, bool& tog, bool& was);
 bool IsTargetVisible(const RBX::Vec3& worldPos);
 void CollectHitboxParts(std::uintptr_t characterAddr, int hitbox, std::vector<std::uintptr_t>& out);
 RBX::Vec3 PartWorldPos(std::uintptr_t partAddr);

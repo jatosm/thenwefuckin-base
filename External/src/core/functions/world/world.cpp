@@ -1,4 +1,4 @@
-﻿#ifndef IMGUI_DEFINE_MATH_OPERATORS
+#ifndef IMGUI_DEFINE_MATH_OPERATORS
 #define IMGUI_DEFINE_MATH_OPERATORS
 #endif
 #include "world.h"
@@ -16,7 +16,7 @@ namespace {
 ImFont* WF_EspFont(){ auto &f=imGuiCustom::GetFonts(); return f.CascadiaMonoBL?f.CascadiaMonoBL:ImGui::GetFont(); }
 float WF_EspSize(){ return variables::Misc::espFontSize; }
 ImU32 WF_ToU32(const ImVec4& c){ return IM_COL32(int(c.x*255),int(c.y*255),int(c.z*255),int(c.w*255)); }
-void WF_DrawOutlinedText(ImDrawList* dl,ImVec2 p,std::string t,ImU32 col){ ImFont* f=WF_EspFont(); float s=WF_EspSize(); dl->AddText(f,s,ImVec2(p.x-1,p.y),IM_COL32(0,0,0,255),t.c_str()); dl->AddText(f,s,ImVec2(p.x+1,p.y),IM_COL32(0,0,0,255),t.c_str()); dl->AddText(f,s,ImVec2(p.x,p.y-1),IM_COL32(0,0,0,255),t.c_str()); dl->AddText(f,s,ImVec2(p.x,p.y+1),IM_COL32(0,0,0,255),t.c_str()); dl->AddText(f,s,p,col,t.c_str()); }
+void WF_DrawOutlinedText(ImDrawList* dl,ImVec2 p,std::string t,ImU32 col){ ImFont* f=WF_EspFont(); float s=WF_EspSize(); dl->AddText(f,s,ImVec2(p.x+1.0f,p.y+1.0f),IM_COL32(0,0,0,255),t.c_str()); dl->AddText(f,s,p,col,t.c_str()); }
 bool WF_ToScreen(const RBX::Vec3& w,const RBX::Mat4& v,ImVec2& o){ auto s=W2S::WorldToScreen(w,v); if(s.X==0&&s.Y==0) return false; o=ImVec2(s.X,s.Y); return true; }
 void WF_DrawWorldBox(ImDrawList* dl,float x0,float y0,float x1,float y1,ImU32 col){ dl->AddRect(ImVec2(x0-1,y0-1),ImVec2(x1+1,y1+1),IM_COL32(0,0,0,255),0,0,1); dl->AddRect(ImVec2(x0,y0),ImVec2(x1,y1),col,0,0,1); dl->AddRect(ImVec2(x0+1,y0+1),ImVec2(x1-1,y1-1),IM_COL32(0,0,0,255),0,0,1); }
 void WF_DrawHealthBar(ImDrawList* dl,float bx0,float bx1,float by0,float by1,float frac,ImU32 col){ if(by1<by0) std::swap(by0,by1); bx0=std::floor(bx0+0.5f); bx1=bx0+2; by0=std::floor(by0+0.5f); by1=std::floor(by1+0.5f); float h=by1-by0; if(h<=1) return; frac=std::clamp(frac,0.f,1.f); dl->AddRectFilled(ImVec2(bx0,by0),ImVec2(bx1,by1),IM_COL32(0,0,0,200)); float ft=by1-h*frac; if(ft<by0) ft=by0; if(frac>0.001f) dl->AddRectFilled(ImVec2(bx0,ft),ImVec2(bx1,by1),col); dl->AddRectFilled(ImVec2(bx0-1,by0-1),ImVec2(bx1+1,by0),IM_COL32(0,0,0,255)); dl->AddRectFilled(ImVec2(bx0-1,by1),ImVec2(bx1+1,by1+1),IM_COL32(0,0,0,255)); dl->AddRectFilled(ImVec2(bx0-1,by0),ImVec2(bx0,by1),IM_COL32(0,0,0,255)); dl->AddRectFilled(ImVec2(bx1,by0),ImVec2(bx1+1,by1),IM_COL32(0,0,0,255)); }
@@ -26,7 +26,11 @@ RBX::Vec3 WF_PartPos(std::uintptr_t partAddr){ if(!partAddr) return {}; auto pri
 namespace WorldVisuals {
 void Render(ImDrawList* dl, const RBX::Mat4& v) {
     if (!variables::World::enabled) return;
-    std::vector<WorldCache::Entry> local;
+
+    if (!variables::World::ores && !variables::World::plants && !variables::World::animals &&
+        !variables::World::soldiers && !variables::World::tools)
+        return;
+    static std::vector<WorldCache::Entry> local;
     {
         std::lock_guard<std::mutex> lk(WorldCache::mtx);
         if (WorldCache::entries.empty()) return;
@@ -40,7 +44,9 @@ void Render(ImDrawList* dl, const RBX::Mat4& v) {
         if (!WF_ToScreen(e.pos, v, scr)) continue;
         bool showName = variables::World::name;
         bool showDist = variables::World::distance;
-        std::string distTxt = std::to_string((int)e.dist) + "m";
+        std::string distTxt;
+        if (showDist)
+            distTxt = std::to_string((int)e.dist) + "m";
         ImU32 distCol = IM_COL32(120,255,120,255);
         if (e.category=="plant" && e.plantIdx>=0 && e.plantIdx<7) distCol = WF_ToU32(variables::World::plantsColor[e.plantIdx]);
         else if (e.category=="ore" && e.oreIdx>=0 && e.oreIdx<3) distCol = WF_ToU32(variables::World::oresColor[e.oreIdx]);
@@ -99,7 +105,7 @@ void Render(ImDrawList* dl, const RBX::Mat4& v) {
             const ImVec2 tsD = font->CalcTextSizeA(sz, FLT_MAX, 0.0f, distTxt.c_str());
             float cx = hasBox ? (bx0+bx1)*0.5f : scr.x;
             if (isNPC) {
-                
+
                 float nameY = hasBox ? (by0 - tsN.y - 4.0f) : (scr.y - tsD.y - tsN.y - 2.0f);
                 float distY = hasBox ? (by1 + 2.0f) : (scr.y + 1.0f);
                 WF_DrawOutlinedText(dl, ImVec2(cx - tsN.x*0.5f, nameY), e.name, white);
@@ -422,13 +428,7 @@ inline void tick(uintptr_t addr) {
     if (!any_lighting && lighting.captured && lighting.address == addr)
         lighting = {};
     force_lighting_dirty();
-    {
-        static bool announced = false;
-        if (!announced && any_lighting) {
-            announced = true;
-            printf("[world] lighting live @0x%llX\n", (unsigned long long)addr);
-        }
-    }
+    (void)addr; (void)any_lighting;
 }
 
 inline std::uintptr_t g_skyBuf = 0;
@@ -523,7 +523,7 @@ inline void skybox_tick(std::uintptr_t lightAddr)
         }
     }
 }
-} 
+}
 
 void TickLighting()
 {

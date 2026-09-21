@@ -29,12 +29,9 @@ struct Entry {
 	std::string container;
 };
 
-
 std::vector<Entry> Collect(std::uint64_t character);
 
-
 std::vector<Entry> CollectDrawable(std::uint64_t character);
-
 
 std::vector<Entry> CollectForBounds(std::uint64_t character);
 

@@ -43,8 +43,8 @@ static const std::unordered_map<std::string, FallenWeaponBallistics> FALLEN_WEAP
     {"Nail Gun",             { 165.f, 0.18f, 18.0f, 11.0f, 8.8f}},
     {"Crossbow",             { 420.f, 0.17f, 17.1f, 10.4f, 8.4f}},
     {"Wooden Bow",           { 280.f, 0.17f, 18.0f, 11.0f, 8.8f}},
-    {"Salvaged RPG",         { 100.f, 0.12f, 16.2f, 9.9f, 7.9f}},
-    {"Pumpkin Launcher",     {  80.f, 0.16f, 16.2f, 9.9f, 7.9f}},
+    {"Salvaged RPG",               {100.f, 0.12f, 16.2f, 9.9f, 7.9f}},
+    {"Pumpkin Launcher",           { 80.f, 0.16f, 16.2f, 9.9f, 7.9f}},
     {"Military Grenade Launcher",  { 85.f, 0.15f, 16.2f, 9.9f, 7.9f}},
     {"Salvaged Grenade Launcher",  { 85.f, 0.15f, 16.2f, 9.9f, 7.9f}},
 };
@@ -135,6 +135,9 @@ inline std::string fallen_get_local_weapon() {
 }
 inline rbx::vector3_t fallen_get_local_velocity() {
     try {
+
+        if (PlayerCache::localRootPrim)
+            return memory->read<rbx::vector3_t>(PlayerCache::localRootPrim + Offsets::Primitive::AssemblyLinearVelocity);
         if (Globals::localPlayer.Addr == 0) return {};
         auto lp_char = Globals::localPlayer.GetModelRef();
         if (lp_char.Addr == 0) return {};
@@ -146,49 +149,24 @@ inline rbx::vector3_t fallen_get_local_velocity() {
     } catch (...) {}
     return {};
 }
-inline void fallen_predict(rbx::vector3_t& target_pos, const rbx::vector3_t& cam_pos,
-                           const rbx::vector3_t& target_vel, float bullet_vel,
-                           const rbx::vector3_t& local_vel = {}) {
-    if (bullet_vel <= 0.f) return;
-    float dist = sqrtf(
-        (target_pos.x - cam_pos.x) * (target_pos.x - cam_pos.x) +
-        (target_pos.y - cam_pos.y) * (target_pos.y - cam_pos.y) +
-        (target_pos.z - cam_pos.z) * (target_pos.z - cam_pos.z));
-    if (dist < 1.f) return;
-    float ox = target_pos.x, oy = target_pos.y, oz = target_pos.z;
-    rbx::vector3_t scaled_vel = target_vel * variables::Aimbot::target_velocity_scale;
-    for (int i = 0; i < 3; i++) {
-        float dx = target_pos.x - cam_pos.x;
-        float dy = target_pos.y - cam_pos.y;
-        float dz = target_pos.z - cam_pos.z;
-        float inv_dist = (dist > 0.1f) ? 1.f / dist : 0.f;
-        float dir_x = dx * inv_dist, dir_y = dy * inv_dist, dir_z = dz * inv_dist;
-        float vel_proj = local_vel.x * dir_x + local_vel.y * dir_y + local_vel.z * dir_z;
-        float eff_bv = bullet_vel + vel_proj;
-        if (eff_bv < 10.f) eff_bv = 10.f;
-        float ping_sec = variables::Aimbot::prediction_ping / 1000.f;
-        float ft = (dist / eff_bv) + ping_sec;
-        float px = ox + scaled_vel.x * ft;
-        float pz = oz + scaled_vel.z * ft;
-        float py = oy + scaled_vel.y * ft
-            + 0.5f * FALLEN_GRAVITY * variables::Aimbot::fallen_grav_mult * ft * ft
-            - 0.5f * variables::Aimbot::target_gravity_comp * ft * ft;
-        dx = px - cam_pos.x;
-        dy = py - cam_pos.y;
-        dz = pz - cam_pos.z;
-        dist = sqrtf(dx * dx + dy * dy + dz * dz);
-        target_pos.x = px;
-        target_pos.y = py;
-        target_pos.z = pz;
+
+inline void fallen_clamp_velocity(rbx::vector3_t& vel, float max_speed) {
+    if (max_speed <= 0.f) return;
+    float mag_xz = sqrtf(vel.x * vel.x + vel.z * vel.z);
+    if (mag_xz > max_speed && mag_xz > 0.01f) {
+        float scale = max_speed / mag_xz;
+        vel.x *= scale;
+        vel.z *= scale;
     }
 }
+
 static inline std::string g_fallen_cached_wpn;
 static inline float       g_fallen_cached_base_bv = 0;
 static inline DWORD       g_fallen_last_wpn_check = 0;
 inline void fallen_update_weapon_auto()
 {
     DWORD now = GetTickCount();
-    if (now - g_fallen_last_wpn_check < 250) return;
+    if (now - g_fallen_last_wpn_check < 500) return;
     g_fallen_last_wpn_check = now;
     if (variables::Aimbot::selected_weapon_index == 0) {
         std::string new_wpn = fallen_get_local_weapon();
@@ -202,15 +180,50 @@ inline void fallen_update_weapon_auto()
         g_fallen_cached_wpn = new_wpn;
         g_fallen_cached_base_bv = new_base;
     }
-    else if (variables::Aimbot::selected_weapon_index < 29) {
-        std::string selected_wpn = FALLEN_WEAPON_LIST[variables::Aimbot::selected_weapon_index];
-        float base_bv = fallen_get_base_bv(selected_wpn);
-        float base_grav = fallen_get_base_grav(selected_wpn);
-        variables::Aimbot::fallen_bv_override = base_bv;
-        variables::Aimbot::fallen_grav_mult = base_grav;
-        variables::Aimbot::detected_weapon_name = selected_wpn;
+    else if (variables::Aimbot::selected_weapon_index > 0 &&
+             variables::Aimbot::selected_weapon_index < (int)FALLEN_WEAPON_LIST.size() - 1) {
+        static int lastSel = -1;
+        if (variables::Aimbot::selected_weapon_index != lastSel) {
+            lastSel = variables::Aimbot::selected_weapon_index;
+            std::string selected_wpn = FALLEN_WEAPON_LIST[variables::Aimbot::selected_weapon_index];
+            variables::Aimbot::fallen_bv_override = fallen_get_base_bv(selected_wpn);
+            variables::Aimbot::fallen_grav_mult = fallen_get_base_grav(selected_wpn);
+            variables::Aimbot::detected_weapon_name = selected_wpn;
+        }
     }
     else {
         variables::Aimbot::detected_weapon_name = "Custom / Manual";
+    }
+}
+inline void fallen_predict(rbx::vector3_t& target_pos, const rbx::vector3_t& cam_pos,
+                           const rbx::vector3_t& target_vel, float bullet_vel,
+                           const rbx::vector3_t& local_vel = {}) {
+    if (bullet_vel <= 0.f) return;
+    float dist = sqrtf(
+        (target_pos.x - cam_pos.x) * (target_pos.x - cam_pos.x) +
+        (target_pos.y - cam_pos.y) * (target_pos.y - cam_pos.y) +
+        (target_pos.z - cam_pos.z) * (target_pos.z - cam_pos.z));
+    if (dist < 1.f) return;
+    float ox = target_pos.x, oy = target_pos.y, oz = target_pos.z;
+    for (int i = 0; i < 3; i++) {
+        float dx = target_pos.x - cam_pos.x;
+        float dy = target_pos.y - cam_pos.y;
+        float dz = target_pos.z - cam_pos.z;
+        float inv_dist = (dist > 0.1f) ? 1.f / dist : 0.f;
+        float dir_x = dx * inv_dist, dir_y = dy * inv_dist, dir_z = dz * inv_dist;
+        float vel_proj = local_vel.x * dir_x + local_vel.y * dir_y + local_vel.z * dir_z;
+        float eff_bv = bullet_vel + vel_proj;
+        if (eff_bv < 10.f) eff_bv = 10.f;
+        float ft = dist / eff_bv;
+        float px = ox + target_vel.x * ft;
+        float pz = oz + target_vel.z * ft;
+        float py = oy + target_vel.y * ft + 0.5f * FALLEN_GRAVITY * variables::Aimbot::fallen_grav_mult * ft * ft;
+        dx = px - cam_pos.x;
+        dy = py - cam_pos.y;
+        dz = pz - cam_pos.z;
+        dist = sqrtf(dx * dx + dy * dy + dz * dz);
+        target_pos.x = px;
+        target_pos.y = py;
+        target_pos.z = pz;
     }
 }

@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "../../sdk/sdk.h"
 #include "../variables/variables.h"
 #include "../globals/globals.h"
@@ -13,7 +13,7 @@ struct Entry {
     std::string name;
     RBX::Vec3 pos{};
     float dist = 0.f;
-    std::string category; 
+    std::string category;
     int plantIdx = -1;
     int oreIdx = -1;
     int animalIdx = -1;

@@ -44,7 +44,6 @@ bool NameHas(const std::string& s, const char* needle)
 	return a.find(b) != std::string::npos;
 }
 
-
 bool IsSkipPartName(const std::string& name)
 {
 	if (name.empty())
@@ -54,8 +53,6 @@ bool IsSkipPartName(const std::string& name)
 	return NameHas(name, "collision") || NameHas(name, "hitbox") ||
 	       NameHas(name, "capsule") || NameHas(name, "nocol");
 }
-
-
 
 bool IsSkipContainerName(const std::string& name)
 {
@@ -200,7 +197,6 @@ void Walk(
 		return;
 	}
 
-
 	if (!under_acc && (cls == "Model" || cls == "Folder"))
 	{
 		const std::string nm = node.GetName();
@@ -234,7 +230,6 @@ void Walk(
 		const std::string nm = node.GetName();
 		if (IsSkipPartName(nm))
 			return;
-
 
 		const bool acc = under_acc || (nm == "Handle");
 		PushPart(character, node, container, acc, seen, out);

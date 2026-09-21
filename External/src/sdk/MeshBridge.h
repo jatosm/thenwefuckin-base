@@ -33,8 +33,6 @@ namespace {
         bool IsValid(uintptr_t addr) const { return addr != 0; }
     } inline g_Memory;
 
-
-
     inline uintptr_t CachedPrimitive(uintptr_t part)
     {
         if (!part)
@@ -65,9 +63,8 @@ namespace {
         return prim;
     }
 
-    inline Mesh::Vector3 CachedSize(uintptr_t part)
-    {
-        struct Entry { Mesh::Vector3 sz; std::uint64_t tick; };
+        inline Mesh::Vector3 CachedSize(uintptr_t part)
+    {        struct Entry { Mesh::Vector3 sz; std::uint64_t tick; };
         static std::unordered_map<uintptr_t, Entry> s_cache;
         static std::uint64_t s_gc = 0;
         const std::uint64_t now = GetTickCount64();
@@ -95,6 +92,66 @@ namespace {
         else if (it != s_cache.end())
             s_cache.erase(it);
         return sz;
+    }
+
+    inline bool CachedFrameData(uintptr_t part, Mesh::Vector3& pos, Mesh::Matrix4x4& rot, Mesh::Vector3& sz)
+    {
+        if (!part)
+            return false;
+        struct Entry { Mesh::Vector3 pos; Mesh::Matrix4x4 rot; Mesh::Vector3 sz; std::uint64_t tick; };
+        static std::unordered_map<uintptr_t, Entry> s_cache;
+        static std::uint64_t s_gc = 0;
+        const std::uint64_t now = GetTickCount64();
+        if (now - s_gc > 5000)
+        {
+            for (auto it = s_cache.begin(); it != s_cache.end(); )
+            {
+                if (now - it->second.tick > 5000)
+                    it = s_cache.erase(it);
+                else
+                    ++it;
+            }
+            s_gc = now;
+        }
+        auto it = s_cache.find(part);
+        if (it != s_cache.end() && now - it->second.tick < 12)
+        {
+            pos = it->second.pos;
+            rot = it->second.rot;
+            sz = it->second.sz;
+            return true;
+        }
+        const uintptr_t prim = CachedPrimitive(part);
+        if (!prim)
+        {
+            if (it != s_cache.end())
+                s_cache.erase(it);
+            return false;
+        }
+        struct FrameData {
+            float r[9];
+            Mesh::Vector3 p;
+        };
+        static_assert(sizeof(FrameData) == 48, "unexpected primitive layout");
+        FrameData fd{};
+        if (!memory->read_raw(prim + Offsets::Primitive::Rotation, &fd, sizeof(fd)))
+        {
+            if (it != s_cache.end())
+                s_cache.erase(it);
+            return false;
+        }
+        pos = fd.p;
+        rot = Mesh::Matrix4x4(
+            fd.r[0], fd.r[1], fd.r[2], 0.f,
+            fd.r[3], fd.r[4], fd.r[5], 0.f,
+            fd.r[6], fd.r[7], fd.r[8], 0.f,
+            0.f, 0.f, 0.f, 1.f
+        );
+        sz = memory->read<Mesh::Vector3>(prim + Offsets::Primitive::Size);
+        if (s_cache.size() >= 1024)
+            s_cache.clear();
+        s_cache[part] = { pos, rot, sz, now };
+        return true;
     }
 }
 
@@ -150,31 +207,9 @@ namespace Cheat {
             return CachedPrimitive(address);
         }
 
-
-
-
         bool GetFrameData(Vector3& pos, Matrix4x4& rot, Vector3& sz) const {
             pos = {}; rot = Matrix4x4(); sz = {};
-            const uintptr_t prim = CachedPrimitive(address);
-            if (!prim)
-                return false;
-            struct FrameData {
-                float r[9];
-                Vector3 p;
-            };
-            static_assert(sizeof(FrameData) == 48, "unexpected primitive layout");
-            FrameData fd{};
-            if (!memory->read_raw(prim + Offsets::Primitive::Rotation, &fd, sizeof(fd)))
-                return false;
-            rot = Matrix4x4(
-                fd.r[0], fd.r[1], fd.r[2], 0.f,
-                fd.r[3], fd.r[4], fd.r[5], 0.f,
-                fd.r[6], fd.r[7], fd.r[8], 0.f,
-                0.f, 0.f, 0.f, 1.f
-            );
-            pos = fd.p;
-            sz = CachedSize(address);
-            return true;
+            return CachedFrameData(address, pos, rot, sz);
         }
 
         Vector3 GetPosition() const {

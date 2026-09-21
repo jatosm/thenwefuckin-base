@@ -94,7 +94,7 @@ void MeshCache::Refresh(bool force)
 	const ULONGLONG now = GetTickCount64();
 	if (last_refresh_)
 	{
-		const ULONGLONG gap = force ? 1000ull : 5000ull;
+		const ULONGLONG gap = force ? 1000ull : 15000ull;
 		if ((now - last_refresh_) < gap)
 			return;
 	}

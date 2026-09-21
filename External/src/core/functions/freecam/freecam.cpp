@@ -1,4 +1,4 @@
-﻿#include "freecam.h"
+#include "freecam.h"
 #include "../../variables/variables.h"
 #include "../../globals/globals.h"
 #include "../../cache/cache.h"
@@ -106,7 +106,7 @@ void Update(){
         savedCamType = memory->read<int>(camInst.Addr + Offsets::Camera::CameraType);
         savedCamSubject = memory->read<std::uintptr_t>(camInst.Addr + Offsets::Camera::CameraSubject);
         savedCFrame = memory->read<RBX::CFrame>(camInst.Addr + Offsets::Camera::Rotation);
-        
+
         {
             RBX::RbxInstance ch = Globals::localPlayer.GetModelInstance();
             RBX::RbxInstance hrpTmp = ch.Addr ? ch.FindFirstChild("HumanoidRootPart") : RBX::RbxInstance{};
@@ -142,10 +142,10 @@ void Update(){
     float dt = std::clamp(ImGui::GetIO().DeltaTime,0.001f,0.05f);
     float moveSpeed = variables::Freecam::speed * dt * 60.f;
     float vertSpeed = moveSpeed;
-    RBX::Vec3 forward{ std::sin(yaw), 0, std::cos(yaw) }; 
-    
+    RBX::Vec3 forward{ std::sin(yaw), 0, std::cos(yaw) };
+
     float cy=std::cos(yaw), sy=std::sin(yaw), cp=std::cos(pitch), sp=std::sin(pitch);
-    
+
     RBX::Vec3 fwd{ -sy*cp, sp, -cy*cp };
     RBX::Vec3 right{ cy, 0, -sy };
     if(GetAsyncKeyState('W')&0x8000){ position.X += fwd.X*moveSpeed; position.Y += fwd.Y*moveSpeed; position.Z += fwd.Z*moveSpeed; }

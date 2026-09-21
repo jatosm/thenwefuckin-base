@@ -57,7 +57,8 @@ std::uint64_t memory_t::find_module_address(const std::string& module_name) {
         } while (Module32NextW(snap, &entry));
     }
     CloseHandle(snap);
-    if (addr)
+
+    if (addr && base_address == 0)
         base_address = addr;
     return addr;
 }
@@ -72,6 +73,9 @@ bool memory_t::attach_to_process(const std::string& process_name) {
     if (process_handle && process_handle != INVALID_HANDLE_VALUE)
         CloseHandle(process_handle);
     process_handle = h;
+
+    if (pid != process_id)
+        base_address = 0;
     process_id = pid;
     return true;
 }

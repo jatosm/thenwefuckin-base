@@ -1,9 +1,18 @@
+#ifndef IMGUI_DEFINE_MATH_OPERATORS
+#define IMGUI_DEFINE_MATH_OPERATORS
+#endif
 #include "aim.h"
 #include "fallen_prediction.h"
+#include "movement_history.h"
 #include "viewport_silent.h"
 #include "magic.h"
+#include "pf_silent.h"
 #include "../../cache/workspace.h"
 #include "../../cache/worldcache.h"
+#include "../../cache/pf_cache.h"
+#include "../../cache/cb_cache.h"
+#include "../../cache/ops_cache.h"
+#include "../players/players.h"
 #include <mutex>
 #include <vector>
 #include "../../keys/keys.h"
@@ -15,6 +24,91 @@
 #include <cmath>
 #include <chrono>
 #include <algorithm>
+#include <unordered_map>
+#include <random>
+
+namespace {
+bool PfPartScreen(const PfCache::PfPlayer& p, const RBX::Mat4& view, const RBX::Vec2& center, float maxDist, const RBX::Vec3& camPos, bool checkVis, RBX::Vec2& outScreen, RBX::Vec3& outWorld) {
+    static float sw = 0.0f;
+    static float sh = 0.0f;
+    if (sw <= 0.0f) {
+        sw = static_cast<float>(GetSystemMetrics(SM_CXSCREEN));
+        sh = static_cast<float>(GetSystemMetrics(SM_CYSCREEN));
+    }
+    const std::uintptr_t cands[2] = {p.headAddr, p.torsoAddr};
+    for (int i = 0; i < 2; ++i) {
+        if (!cands[i])
+            continue;
+        const RBX::Vec3 w = Aimbot::PartWorldPos(cands[i]);
+        if (w.X == 0 && w.Y == 0 && w.Z == 0)
+            continue;
+        const RBX::Vec2 s = W2S::WorldToScreen(w, view);
+        const bool isMarkedOrInfinite = (maxDist >= 1e8f);
+        if (!isMarkedOrInfinite) {
+            if (s.X == 0 && s.Y == 0)
+                continue;
+            if (s.X < 0 || s.Y < 0 || s.X > sw || s.Y > sh)
+                continue;
+            if (Aimbot::GetDistance2D(center, s) >= maxDist)
+                continue;
+        }
+        if (checkVis && !WorkspaceCache::IsVisible(camPos, w))
+            continue;
+        outScreen = s;
+        outWorld = w;
+        return true;
+    }
+    return false;
+}
+RBX::Vec3 ApplyRaycastSpread(const RBX::Vec3& origin, const RBX::Vec3& target, float spreadAmount) {
+    if (spreadAmount <= 0.001f)
+        return target;
+
+    static std::mt19937 rng(1337);
+    std::uniform_real_distribution<float> distAngle(0.0f, 6.2831853f);
+    std::uniform_real_distribution<float> distRadius(0.0f, 1.0f);
+
+    const float angle = distAngle(rng);
+    const float radius = std::sqrt(distRadius(rng)) * spreadAmount;
+
+    RBX::Vec3 forward = {target.X - origin.X, target.Y - origin.Y, target.Z - origin.Z};
+    const float len = std::sqrt(forward.X * forward.X + forward.Y * forward.Y + forward.Z * forward.Z);
+    if (len < 1e-4f)
+        return target;
+    forward.X /= len;
+    forward.Y /= len;
+    forward.Z /= len;
+
+    const RBX::Vec3 upRef = (std::abs(forward.Y) < 0.99f) ? RBX::Vec3{0.0f, 1.0f, 0.0f} : RBX::Vec3{1.0f, 0.0f, 0.0f};
+
+    RBX::Vec3 right = {
+        forward.Y * upRef.Z - forward.Z * upRef.Y,
+        forward.Z * upRef.X - forward.X * upRef.Z,
+        forward.X * upRef.Y - forward.Y * upRef.X
+    };
+    const float rlen = std::sqrt(right.X * right.X + right.Y * right.Y + right.Z * right.Z);
+    if (rlen > 1e-4f) {
+        right.X /= rlen;
+        right.Y /= rlen;
+        right.Z /= rlen;
+    }
+
+    RBX::Vec3 up = {
+        right.Y * forward.Z - right.Z * forward.Y,
+        right.Z * forward.X - right.X * forward.Z,
+        right.X * forward.Y - right.Y * forward.X
+    };
+
+    const float offsetX = std::cos(angle) * radius;
+    const float offsetY = std::sin(angle) * radius;
+
+    return {
+        target.X + right.X * offsetX + up.X * offsetY,
+        target.Y + right.Y * offsetX + up.Y * offsetY,
+        target.Z + right.Z * offsetX + up.Z * offsetY
+    };
+}
+}
 
 namespace Aimbot {
 void MoveMouse(float x, float y) {
@@ -67,6 +161,22 @@ bool IsAimKeyDown(int vk) {
     return (GetAsyncKeyState(vk) & 0x8000) != 0;
 }
 
+bool AimKeyActive(int key, int mode, bool& tog, bool& was) {
+    if (key <= 0)
+        return mode == 2;
+    if (mode == 2)
+        return true;
+    const bool down = IsAimKeyDown(key);
+    if (mode == 1) {
+        if (down && !was)
+            tog = !tog;
+        was = down;
+        return tog;
+    }
+    was = down;
+    return down;
+}
+
 bool IsTargetVisible(const RBX::Vec3& worldPos) {
     if (!variables::Aimbot::visibleCheck)
         return true;
@@ -104,6 +214,17 @@ void CollectHitboxParts(std::uintptr_t characterAddr, int hitbox, std::vector<st
     if (hitbox == 7 || out.empty()) {
         if (hitbox != 7)
             out.clear();
+
+        static std::unordered_map<std::uintptr_t, std::pair<std::vector<std::uintptr_t>, std::chrono::steady_clock::time_point>> s_hitboxCache;
+        const std::uintptr_t key = characterAddr ^ (std::uintptr_t)(hitbox + 1) * (std::uintptr_t)0x9e3779b9ull;
+        const auto nowH = std::chrono::steady_clock::now();
+        auto hit = s_hitboxCache.find(key);
+        if (hit != s_hitboxCache.end() &&
+            std::chrono::duration_cast<std::chrono::milliseconds>(nowH - hit->second.second).count() < 1000 &&
+            !hit->second.first.empty()) {
+            out.insert(out.end(), hit->second.first.begin(), hit->second.first.end());
+            return;
+        }
         std::vector<std::uintptr_t> stack{characterAddr};
         while (!stack.empty() && out.size() < 64) {
             const uintptr_t cur = stack.back();
@@ -124,6 +245,11 @@ void CollectHitboxParts(std::uintptr_t characterAddr, int hitbox, std::vector<st
                     stack.push_back(child);
             }
         }
+        if (!out.empty()) {
+            if (s_hitboxCache.size() >= 256)
+                s_hitboxCache.clear();
+            s_hitboxCache[key] = {out, nowH};
+        }
     }
 }
 
@@ -139,8 +265,13 @@ RBX::Vec3 PartWorldPos(std::uintptr_t partAddr) {
 void WriteMemoryAngles(const RBX::Vec3& targetWorld) {
     if (!Globals::camera.Addr)
         return;
-    rbx::matrix3_t curRot = memory->read<rbx::matrix3_t>(Globals::camera.Addr + Offsets::Camera::Rotation);
-    rbx::vector3_t camPos = memory->read<rbx::vector3_t>(Globals::camera.Addr + Offsets::Camera::Position);
+
+    const RBX::CFrame cf = memory->read<RBX::CFrame>(Globals::camera.Addr + Offsets::Camera::Rotation);
+    rbx::matrix3_t curRot;
+    curRot.data[0] = cf.data[0]; curRot.data[1] = cf.data[1]; curRot.data[2] = cf.data[2];
+    curRot.data[3] = cf.data[3]; curRot.data[4] = cf.data[4]; curRot.data[5] = cf.data[5];
+    curRot.data[6] = cf.data[6]; curRot.data[7] = cf.data[7]; curRot.data[8] = cf.data[8];
+    rbx::vector3_t camPos{cf.data[9], cf.data[10], cf.data[11]};
     if (camPos.x == 0.0f && camPos.y == 0.0f && camPos.z == 0.0f)
         return;
     rbx::vector3_t want(targetWorld.X - camPos.x, targetWorld.Y - camPos.y, targetWorld.Z - camPos.z);
@@ -176,7 +307,7 @@ void WriteMemoryAngles(const RBX::Vec3& targetWorld) {
 }
 
 namespace {
-bool BestPartScreen(const PlayerCache::CachedPlayer& plr, const RBX::Mat4& view, const RBX::Vec2& center, float maxDist, RBX::Vec2& outScreen, RBX::Vec3& outWorld) {
+bool BestPartScreen(const PlayerCache::CachedPlayer& plr, const RBX::Mat4& view, const RBX::Vec2& center, float maxDist, const RBX::Vec3& camPos, bool checkVis, RBX::Vec2& outScreen, RBX::Vec3& outWorld) {
     static float sw = 0.0f;
     static float sh = 0.0f;
     if (sw <= 0.0f) {
@@ -185,41 +316,65 @@ bool BestPartScreen(const PlayerCache::CachedPlayer& plr, const RBX::Mat4& view,
     }
     const int mode = variables::Aimbot::aimTarget;
     if (mode != 7) {
-        std::uintptr_t addr = 0;
+        std::uintptr_t primary = 0;
         if (mode == 0)
-            addr = plr.headAddr;
+            primary = plr.headAddr;
         else if (mode == 6)
-            addr = plr.rootPartAddr;
+            primary = plr.rootPartAddr;
         else {
-            const PlayerCache::LimbAddrs& limbs = PlayerCache::GetLimbs(plr.characterAddr);
+            const PlayerCache::LimbAddrs& limbs = PlayerCache::GetLimbs(plr.characterAddr, false);
             if (mode == 1)
-                addr = limbs.r6 ? limbs.torso : limbs.upperTorso;
+                primary = limbs.r6 ? limbs.torso : limbs.upperTorso;
             else if (mode == 2)
-                addr = limbs.r6 ? limbs.lArm : limbs.lUpperArm;
+                primary = limbs.r6 ? limbs.lArm : limbs.lUpperArm;
             else if (mode == 3)
-                addr = limbs.r6 ? limbs.rArm : limbs.rUpperArm;
+                primary = limbs.r6 ? limbs.rArm : limbs.rUpperArm;
             else if (mode == 4)
-                addr = limbs.r6 ? limbs.lLeg : limbs.lUpperLeg;
+                primary = limbs.r6 ? limbs.lLeg : limbs.lUpperLeg;
             else if (mode == 5)
-                addr = limbs.r6 ? limbs.rLeg : limbs.rUpperLeg;
+                primary = limbs.r6 ? limbs.rLeg : limbs.rUpperLeg;
         }
-        if (!addr)
+        std::uintptr_t cands[4];
+        int n = 0;
+        auto push = [&](std::uintptr_t a) {
+            if (!a || n >= 4)
+                return;
+            for (int i = 0; i < n; ++i) {
+                if (cands[i] == a)
+                    return;
+            }
+            cands[n++] = a;
+        };
+        push(primary);
+        if (n < 4) {
+            const PlayerCache::LimbAddrs& limbs = PlayerCache::GetLimbs(plr.characterAddr, false);
+            push(plr.headAddr);
+            push(limbs.r6 ? limbs.torso : limbs.upperTorso);
+            push(plr.rootPartAddr);
+        }
+        if (n == 0)
             return false;
-        const RBX::Vec3 w = PartWorldPos(addr);
-        if (w.X == 0 && w.Y == 0 && w.Z == 0)
-            return false;
-        const RBX::Vec2 s = W2S::WorldToScreen(w, view);
-        if (s.X == 0 && s.Y == 0)
-            return false;
-        if (s.X < 0 || s.Y < 0 || s.X > sw || s.Y > sh)
-            return false;
-        if (GetDistance2D(center, s) >= maxDist)
-            return false;
-        if (!IsTargetVisible(w))
-            return false;
-        outScreen = s;
-        outWorld = w;
-        return true;
+        for (int i = 0; i < n; ++i) {
+            const RBX::Vec3 w = PartWorldPos(cands[i]);
+            if (w.X == 0 && w.Y == 0 && w.Z == 0)
+                continue;
+            const RBX::Vec2 s = W2S::WorldToScreen(w, view);
+            const bool isMarkedOrInfinite = (maxDist >= 1e8f);
+            if (!isMarkedOrInfinite) {
+                if (s.X == 0 && s.Y == 0)
+                    continue;
+                if (s.X < 0 || s.Y < 0 || s.X > sw || s.Y > sh)
+                    continue;
+                if (GetDistance2D(center, s) >= maxDist)
+                    continue;
+            }
+            if (checkVis && !WorkspaceCache::IsVisible(camPos, w))
+                continue;
+            outScreen = s;
+            outWorld = w;
+            return true;
+        }
+        return false;
     }
     std::vector<std::uintptr_t> parts;
     CollectHitboxParts(plr.characterAddr, 7, parts);
@@ -233,22 +388,25 @@ bool BestPartScreen(const PlayerCache::CachedPlayer& plr, const RBX::Mat4& view,
         if (w.X == 0 && w.Y == 0 && w.Z == 0)
             continue;
         const RBX::Vec2 s = W2S::WorldToScreen(w, view);
-        if (s.X == 0 && s.Y == 0)
-            continue;
-        if (s.X < 0 || s.Y < 0 || s.X > sw || s.Y > sh)
-            continue;
-        const float d = GetDistance2D(center, s);
-        if (d >= best)
-            continue;
-        const bool vis = IsTargetVisible(w);
+        const bool isMarkedOrInfinite = (maxDist >= 1e8f);
+        if (!isMarkedOrInfinite) {
+            if (s.X == 0 && s.Y == 0)
+                continue;
+            if (s.X < 0 || s.Y < 0 || s.X > sw || s.Y > sh)
+                continue;
+            const float d = GetDistance2D(center, s);
+            if (d >= best)
+                continue;
+        }
+        const bool vis = !checkVis || WorkspaceCache::IsVisible(camPos, w);
         if (vis && !foundVis) {
-            best = d;
+            best = isMarkedOrInfinite ? 0.0f : GetDistance2D(center, s);
             outScreen = s;
             outWorld = w;
             foundVis = true;
             found = true;
         } else if (vis == foundVis) {
-            best = d;
+            best = isMarkedOrInfinite ? 0.0f : GetDistance2D(center, s);
             outScreen = s;
             outWorld = w;
             found = true;
@@ -297,32 +455,101 @@ void RunAimbot(const RBX::Mat4& view) {
     GetCursorPos(&mp);
     const RBX::Vec2 center{static_cast<float>(mp.x), static_cast<float>(mp.y)};
 
-    if (variables::Aimbot::triggerbot && IsAimKeyDown(variables::Aimbot::triggerKey)) {
+    RBX::Vec3 camPos{};
+    bool haveCam = false;
+    if (variables::Aimbot::visibleCheck || variables::Aimbot::prediction || variables::Aimbot::useSpread) {
+        if (Globals::camera.Addr) {
+            camPos = memory->read<RBX::Vec3>(Globals::camera.Addr + Offsets::Camera::Position);
+            haveCam = !(camPos.X == 0 && camPos.Y == 0 && camPos.Z == 0);
+        }
+    }
+    const bool checkVis = variables::Aimbot::visibleCheck && haveCam;
+    const rbx::vector3_t camPosRbx{camPos.X, camPos.Y, camPos.Z};
+
+    static bool aimTog = false, aimWas = false, trigTog = false, trigWas = false;
+    const bool trigHeld = AimKeyActive(variables::Aimbot::triggerKey, variables::Aimbot::triggerKeyMode, trigTog, trigWas);
+    const bool aimHeld = AimKeyActive(variables::Aimbot::aimbotKey, variables::Aimbot::aimbotKeyMode, aimTog, aimWas);
+    trigActiveCached = variables::Aimbot::triggerbot && trigHeld;
+    aimActiveCached = variables::Aimbot::enabled && aimHeld;
+
+    using AimClock = std::chrono::steady_clock;
+    static auto lastTrigScan = AimClock::now() - std::chrono::seconds(10);
+    static auto lastAcqScan = AimClock::now() - std::chrono::seconds(10);
+    const auto nowAim = AimClock::now();
+    const bool doTrigScan = std::chrono::duration_cast<std::chrono::milliseconds>(nowAim - lastTrigScan).count() >= 8;
+    const bool doAcqScan = std::chrono::duration_cast<std::chrono::milliseconds>(nowAim - lastAcqScan).count() >= 8;
+
+    if (variables::Aimbot::triggerbot && trigHeld) {
         static bool pending = false;
         static auto armedAt = std::chrono::steady_clock::now();
-        RBX::Vec2 s{};
-        RBX::Vec3 w{};
-        bool has = false;
-        for (auto& p : PlayerCache::players) {
-            if (!p.isValid)
-                continue;
-            if (Keys::TeamCheckOn() && p.teamAddr && p.teamAddr == PlayerCache::localPlayerTeam)
-                continue;
-            if (!BestPartScreen(p, view, center, variables::Aimbot::fovRadius, s, w))
-                continue;
-            has = true;
-            break;
-        }
-        if (has) {
-            if (!pending) {
-                pending = true;
-                armedAt = std::chrono::steady_clock::now();
-            } else if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - armedAt).count() >= variables::Aimbot::triggerDelay) {
-                AutoClick();
+        if (doTrigScan) {
+            lastTrigScan = nowAim;
+            RBX::Vec2 s{};
+            RBX::Vec3 w{};
+            bool has = false;
+            if (!PlayersTab::target.empty()) {
+                for (auto& p : PlayerCache::players) {
+                    if (!p.isValid || !PlayersTab::IsMarked(p.name))
+                        continue;
+                    if (BestPartScreen(p, view, center, variables::Aimbot::fovRadius, camPos, checkVis, s, w)) {
+                        has = true;
+                        break;
+                    }
+                }
+            }
+            if (!has) {
+                if (OpsCache::viewmodelsAddr) {
+                    for (auto& p : OpsCache::players) {
+                        if (!p.isValid || (p.maxHealth > 0.0f && p.health <= 0.0f))
+                            continue;
+                        if (PlayersTab::IsFriend(p.name))
+                            continue;
+                        if (Keys::TeamCheckOn() && p.teamAddr && p.teamAddr == OpsCache::localTeam)
+                            continue;
+                        if (!BestPartScreen(p, view, center, variables::Aimbot::fovRadius, camPos, checkVis, s, w))
+                            continue;
+                        has = true;
+                        break;
+                    }
+                } else if (CbCache::charactersAddr) {
+                    for (auto& p : CbCache::players) {
+                        if (!p.isValid || (p.maxHealth > 0.0f && p.health <= 0.0f))
+                            continue;
+                        if (PlayersTab::IsFriend(p.name))
+                            continue;
+                        if (Keys::TeamCheckOn() && p.teamAddr && p.teamAddr == CbCache::localTeam)
+                            continue;
+                        if (!BestPartScreen(p, view, center, variables::Aimbot::fovRadius, camPos, checkVis, s, w))
+                            continue;
+                        has = true;
+                        break;
+                    }
+                } else {
+                    for (auto& p : PlayerCache::players) {
+                        if (!p.isValid || (p.maxHealth > 0.0f && p.health <= 0.0f))
+                            continue;
+                        if (PlayersTab::IsFriend(p.name))
+                            continue;
+                        if (Keys::TeamCheckOn() && p.teamAddr && p.teamAddr == PlayerCache::localPlayerTeam)
+                            continue;
+                        if (!BestPartScreen(p, view, center, variables::Aimbot::fovRadius, camPos, checkVis, s, w))
+                            continue;
+                        has = true;
+                        break;
+                    }
+                }
+            }
+            if (has) {
+                if (!pending) {
+                    pending = true;
+                    armedAt = std::chrono::steady_clock::now();
+                } else if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - armedAt).count() >= variables::Aimbot::triggerDelay) {
+                    AutoClick();
+                    pending = false;
+                }
+            } else {
                 pending = false;
             }
-        } else {
-            pending = false;
         }
     }
 
@@ -331,31 +558,186 @@ void RunAimbot(const RBX::Mat4& view) {
         ViewportSilent::Clear();
         MagicBullet::SetActive(false, {});
         MagicBullet::Ensure(false);
+        PfSilent::SetActive(false, {});
         return;
     }
-    if (!IsAimKeyDown(variables::Aimbot::aimbotKey)) {
+    if (!aimHeld) {
         lockedPlayerAddr = 0;
         hasTarget = false;
         ViewportSilent::Clear();
         MagicBullet::SetActive(false, {});
         MagicBullet::Ensure(false);
+        PfSilent::SetActive(false, {});
         return;
     }
 
-    if (lockedPlayerAddr == 0) {
-        float best = variables::Aimbot::fovRadius;
-        std::uintptr_t bestAddr = 0;
+    if (!PlayersTab::target.empty()) {
+        std::uintptr_t targetAddr = 0;
         for (auto& p : PlayerCache::players) {
+            if (p.isValid && PlayersTab::IsMarked(p.name)) {
+                targetAddr = p.playerAddr;
+                break;
+            }
+        }
+        if (!targetAddr) {
+            for (auto& p : CbCache::players) {
+                if (p.isValid && PlayersTab::IsMarked(p.name)) {
+                    targetAddr = p.playerAddr;
+                    break;
+                }
+            }
+        }
+        if (!targetAddr) {
+            for (auto& p : OpsCache::players) {
+                if (p.isValid && PlayersTab::IsMarked(p.name)) {
+                    targetAddr = p.playerAddr;
+                    break;
+                }
+            }
+        }
+        if (targetAddr != 0) {
+            lockedPlayerAddr = targetAddr;
+        }
+    }
+
+    if (PfCache::workspacePlayersAddr && !PfCache::players.empty()) {
+        const bool tc = Keys::TeamCheckOn();
+        if (lockedPlayerAddr != 0) {
+            bool stillValid = false;
+            for (auto& p : PfCache::players) {
+                if (!p.isValid || p.modelAddr != lockedPlayerAddr)
+                    continue;
+                if (PlayersTab::IsFriend(p.name))
+                    break;
+                if (tc && PfCache::IsTeammate(p))
+                    break;
+                RBX::Vec2 s{};
+                RBX::Vec3 w{};
+                if (!PfPartScreen(p, view, center, 999999.0f, camPos, PlayersTab::IsMarked(p.name) ? false : checkVis, s, w))
+                    break;
+                stillValid = true;
+                lastTarget = s;
+                hasTarget = true;
+                if (variables::Aimbot::aimMethod == 3) {
+                    PfSilent::SetActive(true, w);
+                    ViewportSilent::Clear();
+                    MagicBullet::SetActive(false, {});
+                    MagicBullet::Ensure(false);
+                } else if (variables::Aimbot::aimMethod == 2 || variables::Aimbot::magicBullet) {
+                    PfSilent::SetActive(false, {});
+                    ViewportSilent::Clear();
+                    MagicBullet::Ensure(true);
+                    MagicBullet::SetActive(true, w);
+                } else if (variables::Aimbot::aimMethod == 1) {
+                    PfSilent::SetActive(false, {});
+                    ViewportSilent::SetTarget(w);
+                    MagicBullet::SetActive(false, {});
+                    MagicBullet::Ensure(false);
+                } else {
+                    PfSilent::SetActive(false, {});
+                    WriteMemoryAngles(w);
+                    ViewportSilent::Clear();
+                    MagicBullet::SetActive(false, {});
+                    MagicBullet::Ensure(false);
+                }
+                return;
+            }
+            if (!stillValid)
+                lockedPlayerAddr = 0;
+        }
+        float best = variables::Aimbot::fovRadius;
+        RBX::Vec2 bestS{};
+        RBX::Vec3 bestW{};
+        std::uintptr_t bestAddr = 0;
+        for (auto& p : PfCache::players) {
             if (!p.isValid)
                 continue;
-            if (Keys::TeamCheckOn() && p.teamAddr && p.teamAddr == PlayerCache::localPlayerTeam)
+            if (PlayersTab::IsFriend(p.name))
                 continue;
+            if (tc && PfCache::IsTeammate(p))
+                continue;
+            const bool marked = PlayersTab::IsMarked(p.name);
             RBX::Vec2 s{};
             RBX::Vec3 w{};
-            if (!BestPartScreen(p, view, center, best, s, w))
+            if (!PfPartScreen(p, view, center, marked ? 1e9f : best, camPos, marked ? false : checkVis, s, w))
                 continue;
             best = GetDistance2D(center, s);
+            bestS = s;
+            bestW = w;
+            bestAddr = p.modelAddr;
+            if (marked)
+                best = -1.0f;
+        }
+        lockedPlayerAddr = bestAddr;
+        if (!bestAddr) {
+            hasTarget = false;
+            PfSilent::SetActive(false, {});
+            ViewportSilent::Clear();
+            MagicBullet::SetActive(false, {});
+            return;
+        }
+        lastTarget = bestS;
+        hasTarget = true;
+        if (variables::Aimbot::aimMethod == 3) {
+            PfSilent::SetActive(true, bestW);
+            ViewportSilent::Clear();
+            MagicBullet::SetActive(false, {});
+            MagicBullet::Ensure(false);
+        } else if (variables::Aimbot::aimMethod == 2 || variables::Aimbot::magicBullet) {
+            PfSilent::SetActive(false, {});
+            ViewportSilent::Clear();
+            MagicBullet::Ensure(true);
+            MagicBullet::SetActive(true, bestW);
+        } else if (variables::Aimbot::aimMethod == 1) {
+            PfSilent::SetActive(false, {});
+            ViewportSilent::SetTarget(bestW);
+            MagicBullet::SetActive(false, {});
+            MagicBullet::Ensure(false);
+        } else {
+            PfSilent::SetActive(false, {});
+            WriteMemoryAngles(bestW);
+            ViewportSilent::Clear();
+            MagicBullet::SetActive(false, {});
+            MagicBullet::Ensure(false);
+        }
+        return;
+    }
+    PfSilent::SetActive(false, {});
+
+    if (lockedPlayerAddr == 0) {
+        if (!doAcqScan) {
+            hasTarget = false;
+            return;
+        }
+        lastAcqScan = nowAim;
+        float best = variables::Aimbot::fovRadius;
+        std::uintptr_t bestAddr = 0;
+        auto consider = [&](PlayerCache::CachedPlayer& p) {
+            if (!p.isValid || (p.maxHealth > 0.0f && p.health <= 0.0f))
+                return;
+            if (PlayersTab::IsFriend(p.name))
+                return;
+            if (Keys::TeamCheckOn() && p.teamAddr && (p.teamAddr == PlayerCache::localPlayerTeam || p.teamAddr == CbCache::localTeam || p.teamAddr == OpsCache::localTeam))
+                return;
+            const bool marked = PlayersTab::IsMarked(p.name);
+            RBX::Vec2 s{};
+            RBX::Vec3 w{};
+            if (!BestPartScreen(p, view, center, marked ? 1e9f : best, camPos, marked ? false : checkVis, s, w))
+                return;
+            best = GetDistance2D(center, s);
             bestAddr = p.playerAddr;
+            if (marked)
+                best = -1.0f;
+        };
+        if (OpsCache::viewmodelsAddr) {
+            for (auto& p : OpsCache::players)
+                consider(p);
+        } else if (CbCache::charactersAddr) {
+            for (auto& p : CbCache::players)
+                consider(p);
+        } else {
+            for (auto& p : PlayerCache::players)
+                consider(p);
         }
         lockedPlayerAddr = bestAddr;
     }
@@ -365,47 +747,55 @@ void RunAimbot(const RBX::Mat4& view) {
     bool found = false;
     bool npcTarget = false;
     if (lockedPlayerAddr == 0 && variables::Aimbot::includeNPC) {
-        std::vector<std::pair<RBX::Vec3, RBX::Vec3>> npcs;
+
+        RBX::Vec3 nbPos{};
+        RBX::Vec3 nbVel{};
+        bool haveNpc = false;
         {
             std::lock_guard<std::mutex> lk(WorldCache::mtx);
+            float nbest = variables::Aimbot::fovRadius;
             for (auto& e : WorldCache::entries) {
                 if (e.category != "soldier" && e.category != "animal") continue;
                 if (e.pos.X == 0 && e.pos.Y == 0 && e.pos.Z == 0) continue;
-                npcs.emplace_back(e.pos, e.vel);
+                const RBX::Vec2 s = W2S::WorldToScreen(e.pos, view);
+                if (s.X == 0 && s.Y == 0) continue;
+                const float d = GetDistance2D(center, s);
+                if (d >= nbest) continue;
+                nbest = d;
+                nbPos = e.pos;
+                nbVel = e.vel;
+                haveNpc = true;
             }
         }
-        float best = variables::Aimbot::fovRadius;
-        RBX::Vec3 bestVel{};
-        for (auto& np : npcs) {
-            const RBX::Vec2 s = W2S::WorldToScreen(np.first, view);
-            if (s.X == 0 && s.Y == 0) continue;
-            const float d = GetDistance2D(center, s);
-            if (d >= best) continue;
-            best = d;
-            dstWorld = np.first;
-            bestVel = np.second;
-        }
-        if (dstWorld.X != 0 || dstWorld.Y != 0 || dstWorld.Z != 0) {
+        if (haveNpc) {
+            dstWorld = nbPos;
+            RBX::Vec3 npVel = nbVel;
+            MovementHistory::Push(1, nbPos.X, nbPos.Y, nbPos.Z);
+            {
+                MovementHistory::Result nhr{};
+                if (MovementHistory::Sample(1, nhr)) {
+                    npVel.X = nhr.vx * nhr.damp;
+                    npVel.Y = nhr.vy;
+                    npVel.Z = nhr.vz * nhr.damp;
+                }
+            }
             if (variables::Aimbot::prediction) {
                 fallen_update_weapon_auto();
                 if (variables::Aimbot::fallen_prediction) {
                     float bv = fallen_get_bullet_velocity(fallen_get_local_weapon());
-                    if (bv > 0.f && Globals::camera.Addr) {
-                        const int pingMs = Ping::GetMs();
-                        variables::Aimbot::prediction_ping = pingMs > 0 ? (float)pingMs : 0.f;
-                        rbx::vector3_t target_vel = { bestVel.X, bestVel.Y, bestVel.Z };
+                    if (bv > 0.f && haveCam) {
+                        rbx::vector3_t target_vel = { npVel.X, npVel.Y, npVel.Z };
                         rbx::vector3_t target_pos = { dstWorld.X, dstWorld.Y, dstWorld.Z };
-                        rbx::vector3_t camPos = memory->read<rbx::vector3_t>(Globals::camera.Addr + Offsets::Camera::Position);
                         rbx::vector3_t local_vel = fallen_get_local_velocity();
-                        fallen_predict(target_pos, camPos, target_vel, bv, local_vel);
+                        fallen_predict(target_pos, camPosRbx, target_vel, bv, local_vel);
                         dstWorld.X = target_pos.x; dstWorld.Y = target_pos.y; dstWorld.Z = target_pos.z;
                     }
                 } else {
                     const int pingMs = Ping::GetMs();
                     const float t = (pingMs > 0 ? (float)pingMs / 1000.0f : 0.0f) + 0.016f;
-                    dstWorld.X += bestVel.X * t;
-                    dstWorld.Y += bestVel.Y * t;
-                    dstWorld.Z += bestVel.Z * t;
+                    dstWorld.X += npVel.X * t;
+                    dstWorld.Y += npVel.Y * t;
+                    dstWorld.Z += npVel.Z * t;
                 }
             }
             const RBX::Vec2 proj = W2S::WorldToScreen(dstWorld, view);
@@ -415,32 +805,48 @@ void RunAimbot(const RBX::Mat4& view) {
     if (lockedPlayerAddr == 0 && !npcTarget)
         return;
 
-    for (auto& p : PlayerCache::players) {
-        if (npcTarget) break;
-        if (!p.isValid || p.playerAddr != lockedPlayerAddr)
-            continue;
-        if (Keys::TeamCheckOn() && p.teamAddr && p.teamAddr == PlayerCache::localPlayerTeam) {
+    auto trackOne = [&](PlayerCache::CachedPlayer& p) -> bool {
+        if (!p.isValid || p.playerAddr != lockedPlayerAddr || (p.maxHealth > 0.0f && p.health <= 0.0f))
+            return false;
+        if (PlayersTab::IsFriend(p.name)) {
             lockedPlayerAddr = 0;
             hasTarget = false;
-            return;
+            return false;
         }
-        if (!BestPartScreen(p, view, center, 999999.0f, dst, dstWorld))
-            break;
+        const bool marked = PlayersTab::IsMarked(p.name);
+        if (!marked && Keys::TeamCheckOn() && p.teamAddr && (p.teamAddr == PlayerCache::localPlayerTeam || p.teamAddr == CbCache::localTeam || p.teamAddr == OpsCache::localTeam)) {
+            lockedPlayerAddr = 0;
+            hasTarget = false;
+            return false;
+        }
+        if (!BestPartScreen(p, view, center, 999999.0f, camPos, marked ? false : checkVis, dst, dstWorld))
+            return false;
+        MovementHistory::Push(p.playerAddr, dstWorld.X, dstWorld.Y, dstWorld.Z);
+        RBX::Vec3 histVel{};
+        bool haveHist = false;
+        {
+            MovementHistory::Result hr{};
+            if (MovementHistory::Sample(p.playerAddr, hr)) {
+                histVel = { hr.vx * hr.damp, hr.vy, hr.vz * hr.damp };
+                haveHist = true;
+            }
+        }
         if (variables::Aimbot::prediction) {
             fallen_update_weapon_auto();
             if (variables::Aimbot::fallen_prediction) {
-                std::string my_weapon = fallen_get_local_weapon();
-                float bv = fallen_get_bullet_velocity(my_weapon);
+                float bv = fallen_get_bullet_velocity(fallen_get_local_weapon());
                 if (bv > 0.f) {
                     const std::uintptr_t prim = memory->read<std::uintptr_t>(p.rootPartAddr + Offsets::BasePart::Primitive);
                     if (prim) {
-                        const int pingMs = Ping::GetMs();
-                        variables::Aimbot::prediction_ping = pingMs > 0 ? (float)pingMs : 0.f;
                         rbx::vector3_t target_vel = memory->read<rbx::vector3_t>(prim + Offsets::Primitive::AssemblyLinearVelocity);
+                        if (haveHist) {
+                            target_vel.x = histVel.X;
+                            target_vel.y = histVel.Y;
+                            target_vel.z = histVel.Z;
+                        }
                         rbx::vector3_t target_pos = { dstWorld.X, dstWorld.Y, dstWorld.Z };
-                        rbx::vector3_t camPos = memory->read<rbx::vector3_t>(Globals::camera.Addr + Offsets::Camera::Position);
                         rbx::vector3_t local_vel = fallen_get_local_velocity();
-                        fallen_predict(target_pos, camPos, target_vel, bv, local_vel);
+                        fallen_predict(target_pos, camPosRbx, target_vel, bv, local_vel);
                         dstWorld.X = target_pos.x; dstWorld.Y = target_pos.y; dstWorld.Z = target_pos.z;
                         const RBX::Vec2 proj = W2S::WorldToScreen(dstWorld, view);
                         if (proj.X != 0 || proj.Y != 0)
@@ -450,7 +856,9 @@ void RunAimbot(const RBX::Mat4& view) {
             } else {
                 const std::uintptr_t prim = memory->read<std::uintptr_t>(p.rootPartAddr + Offsets::BasePart::Primitive);
                 if (prim) {
-                    const RBX::Vec3 vel = memory->read<RBX::Vec3>(prim + Offsets::Primitive::AssemblyLinearVelocity);
+                    RBX::Vec3 vel = memory->read<RBX::Vec3>(prim + Offsets::Primitive::AssemblyLinearVelocity);
+                    if (haveHist)
+                        vel = histVel;
                     const int pingMs = Ping::GetMs();
                     const float t = (pingMs > 0 ? (float)pingMs / 1000.0f : 0.0f) + 0.016f;
                     dstWorld.X += vel.X * t;
@@ -463,7 +871,25 @@ void RunAimbot(const RBX::Mat4& view) {
             }
         }
         found = true;
-        break;
+        return true;
+    };
+    if (!npcTarget) {
+        if (OpsCache::viewmodelsAddr) {
+            for (auto& p : OpsCache::players) {
+                if (trackOne(p))
+                    break;
+            }
+        } else if (CbCache::charactersAddr) {
+            for (auto& p : CbCache::players) {
+                if (trackOne(p))
+                    break;
+            }
+        } else {
+            for (auto& p : PlayerCache::players) {
+                if (trackOne(p))
+                    break;
+            }
+        }
     }
     if (!found && !npcTarget) {
         lockedPlayerAddr = 0;
@@ -484,29 +910,38 @@ void RunAimbot(const RBX::Mat4& view) {
             return;
         }
     }
-    if (variables::Aimbot::aimMethod == 1) {
+    if (variables::Aimbot::aimMethod == 0) {
         WriteMemoryAngles(dstWorld);
         ViewportSilent::Clear();
         MagicBullet::SetActive(false, {});
         MagicBullet::Ensure(false);
         return;
     }
-    if (variables::Aimbot::aimMethod == 2) {
+    if (variables::Aimbot::aimMethod == 1) {
         ViewportSilent::SetTarget(dstWorld);
         MagicBullet::SetActive(false, {});
         MagicBullet::Ensure(false);
         return;
     }
-    if (variables::Aimbot::aimMethod == 3 || variables::Aimbot::magicBullet) {
+    if (variables::Aimbot::aimMethod == 2 || variables::Aimbot::magicBullet) {
         ViewportSilent::Clear();
         MagicBullet::Ensure(true);
-        MagicBullet::SetActive(true, dstWorld);
+
+        RBX::Vec3 finalTarget = dstWorld;
+        if (variables::Aimbot::useSpread && variables::Aimbot::spreadModifier > 0.001f) {
+            static std::mt19937 hitRng(42);
+            std::uniform_real_distribution<float> pct(0.0f, 100.0f);
+            if (pct(hitRng) > variables::Aimbot::hitChance) {
+                finalTarget = ApplyRaycastSpread(camPos, dstWorld, variables::Aimbot::spreadModifier);
+            }
+        }
+
+        MagicBullet::SetActive(true, finalTarget);
         return;
     }
     ViewportSilent::Clear();
     MagicBullet::SetActive(false, {});
     MagicBullet::Ensure(false);
-    const float k = 1.0f / (variables::Aimbot::smoothing <= 0.01f ? 1.0f : variables::Aimbot::smoothing);
-    MoveMouse(dx * k, dy * k);
+    return;
 }
 }

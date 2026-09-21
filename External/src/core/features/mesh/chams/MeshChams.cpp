@@ -224,8 +224,8 @@ bool MeshAabb(const CachedMesh& mesh, const Vector3& ms, float out_min[3], float
 	if (n <= 0)
 		return false;
 	int step = 1;
-	if (n > 16000)
-		step = (n + 15999) / 16000;
+	if (n > 4000)
+		step = (n + 3999) / 4000;
 	for (int i = 0; i < n; i += step)
 	{
 		const float* p = mesh.vertices[i].pos;
@@ -442,422 +442,6 @@ void DrawBoxFallback(
 	}
 }
 
-struct ScreenTri {
-	ImVec2 a, b, c;
-};
-
-void PushOutlineFromPartBox(
-	std::vector<ScreenTri>& out,
-	const Vector3& pos,
-	const Matrix4x4& rot,
-	const Vector3& sz,
-	const Matrix4x4& view,
-	const Vector2& vp,
-	float scale_x,
-	float scale_y)
-{
-	if (sz.x < 0.01f && sz.y < 0.01f && sz.z < 0.01f)
-		return;
-	const Vector3 h{ sz.x * 0.5f, sz.y * 0.5f, sz.z * 0.5f };
-	const Vector3 lc[8] = {
-		{ -h.x, -h.y, -h.z }, { -h.x, -h.y,  h.z },
-		{ -h.x,  h.y, -h.z }, { -h.x,  h.y,  h.z },
-		{  h.x, -h.y, -h.z }, {  h.x, -h.y,  h.z },
-		{  h.x,  h.y, -h.z }, {  h.x,  h.y,  h.z },
-	};
-	ImVec2 sp[8];
-	bool sv[8]{};
-	bool any = false;
-	for (int i = 0; i < 8; ++i)
-	{
-		Vector3 wc{
-			pos.x + rot.m[0][0] * lc[i].x + rot.m[0][1] * lc[i].y + rot.m[0][2] * lc[i].z,
-			pos.y + rot.m[1][0] * lc[i].x + rot.m[1][1] * lc[i].y + rot.m[1][2] * lc[i].z,
-			pos.z + rot.m[2][0] * lc[i].x + rot.m[2][1] * lc[i].y + rot.m[2][2] * lc[i].z,
-		};
-		Vector2 sc;
-		sv[i] = W2S(view, vp, scale_x, scale_y, wc, sc);
-		sp[i] = sv[i] ? ImVec2(sc.x, sc.y) : ImVec2(-9999.f, -9999.f);
-		any = any || sv[i];
-	}
-	if (!any)
-		return;
-	static const int tris[12][3] = {
-		{ 0, 1, 3 }, { 0, 3, 2 }, { 4, 6, 7 }, { 4, 7, 5 },
-		{ 0, 4, 5 }, { 0, 5, 1 }, { 2, 3, 7 }, { 2, 7, 6 },
-		{ 0, 2, 6 }, { 0, 6, 4 }, { 1, 5, 7 }, { 1, 7, 3 },
-	};
-	for (const auto& t : tris)
-	{
-		if (!sv[t[0]] || !sv[t[1]] || !sv[t[2]])
-			continue;
-		ImVec2 a = sp[t[0]], b = sp[t[1]], c = sp[t[2]];
-		float cr = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-		if (cr < 0.15f)
-			continue;
-		out.push_back({ a, b, c });
-	}
-}
-
-bool PointInTri(const ImVec2& p, const ImVec2& a, const ImVec2& b, const ImVec2& c)
-{
-	const float x0 = c.x - a.x, y0 = c.y - a.y;
-	const float x1 = b.x - a.x, y1 = b.y - a.y;
-	const float x2 = p.x - a.x, y2 = p.y - a.y;
-	const float dot00 = x0 * x0 + y0 * y0;
-	const float dot01 = x0 * x1 + y0 * y1;
-	const float dot02 = x0 * x2 + y0 * y2;
-	const float dot11 = x1 * x1 + y1 * y1;
-	const float dot12 = x1 * x2 + y1 * y2;
-	const float inv = dot00 * dot11 - dot01 * dot01;
-	if (std::fabs(inv) < 1e-12f)
-		return false;
-	const float u = (dot11 * dot02 - dot01 * dot12) / inv;
-	const float v = (dot00 * dot12 - dot01 * dot02) / inv;
-	return u >= 0.f && v >= 0.f && (u + v) <= 1.f;
-}
-
-void RasterizeTriMask(std::vector<std::uint8_t>& mask, int gw, int gh,
-                      float origin_x, float origin_y, float cell,
-                      const ScreenTri& t)
-{
-	const float minx = (std::min)(t.a.x, (std::min)(t.b.x, t.c.x));
-	const float miny = (std::min)(t.a.y, (std::min)(t.b.y, t.c.y));
-	const float maxx = (std::max)(t.a.x, (std::max)(t.b.x, t.c.x));
-	const float maxy = (std::max)(t.a.y, (std::max)(t.b.y, t.c.y));
-
-	int x0 = (int)std::floor((minx - origin_x) / cell);
-	int y0 = (int)std::floor((miny - origin_y) / cell);
-	int x1 = (int)std::floor((maxx - origin_x) / cell);
-	int y1 = (int)std::floor((maxy - origin_y) / cell);
-	if (x0 < 0) x0 = 0;
-	if (y0 < 0) y0 = 0;
-	if (x1 >= gw) x1 = gw - 1;
-	if (y1 >= gh) y1 = gh - 1;
-
-	for (int y = y0; y <= y1; ++y)
-	{
-		for (int x = x0; x <= x1; ++x)
-		{
-			const ImVec2 p{
-				origin_x + ((float)x + 0.5f) * cell,
-				origin_y + ((float)y + 0.5f) * cell
-			};
-			if (PointInTri(p, t.a, t.b, t.c))
-				mask[(std::size_t)y * (std::size_t)gw + (std::size_t)x] = 1;
-		}
-	}
-}
-
-ImU32 OutlineCol(float r, float g, float b, float a)
-{
-	if (a < 0.f) a = 0.f;
-	if (a > 1.f) a = 1.f;
-	int R = (int)(r * 255.f + 0.5f);
-	int G = (int)(g * 255.f + 0.5f);
-	int B = (int)(b * 255.f + 0.5f);
-	int A = (int)(a * 255.f + 0.5f);
-	if (R > 255) R = 255;
-	if (G > 255) G = 255;
-	if (B > 255) B = 255;
-	if (A > 255) A = 255;
-	return IM_COL32(R, G, B, A);
-}
-
-void SoftBrush(ImDrawList* dl, const ImVec2& c, float radius, float cr, float cg, float cb, float ca)
-{
-	if (radius < 0.5f || ca < 0.003f)
-		return;
-	constexpr int k_layers = 10;
-	constexpr int k_segs = 20;
-	for (int i = k_layers; i >= 1; --i)
-	{
-		const float t = (float)i / (float)k_layers;
-		const float fall = 1.f - t;
-		const float a = ca * fall * fall * fall * 1.55f;
-		if (a < 0.003f)
-			continue;
-		dl->AddCircleFilled(c, radius * t, OutlineCol(cr, cg, cb, a), k_segs);
-	}
-}
-
-void SoftStroke(
-	ImDrawList* dl,
-	const ImVec2& a,
-	const ImVec2& b,
-	float glow,
-	float cr, float cg, float cb, float ca)
-{
-	if (ca < 0.003f || glow < 0.5f)
-		return;
-	constexpr int k_layers = 8;
-	for (int i = k_layers; i >= 1; --i)
-	{
-		const float t = (float)i / (float)k_layers;
-		const float fall = 1.f - t;
-		const float alpha = ca * fall * fall * 1.1f;
-		if (alpha < 0.003f)
-			continue;
-		dl->AddLine(a, b, OutlineCol(cr, cg, cb, alpha), glow * t);
-	}
-	dl->AddLine(a, b, OutlineCol(cr, cg, cb, ca * 0.55f), 1.8f);
-}
-
-void DrawCharacterContour(
-	ImDrawList* dl,
-	const std::vector<ScreenTri>& tris,
-	float cr, float cg, float cb, float ca,
-	int style)
-{
-	if (!dl || tris.empty())
-		return;
-	if (style < 0) style = 0;
-	if (style > 3) style = 3;
-	if (ca <= 0.001f)
-		return;
-
-	float minx = FLT_MAX, miny = FLT_MAX, maxx = -FLT_MAX, maxy = -FLT_MAX;
-	for (const auto& t : tris)
-	{
-		for (const ImVec2* p : { &t.a, &t.b, &t.c })
-		{
-			minx = (std::min)(minx, p->x);
-			miny = (std::min)(miny, p->y);
-			maxx = (std::max)(maxx, p->x);
-			maxy = (std::max)(maxy, p->y);
-		}
-	}
-	if (!(minx < maxx) || !(miny < maxy))
-		return;
-
-	const float body_w = maxx - minx;
-	const float body_h = maxy - miny;
-	if (body_w < 2.f || body_h < 2.f)
-		return;
-
-	constexpr int k_max_dim = 192;
-	float cell = (std::max)(body_w, body_h) / (float)k_max_dim;
-	if (cell < 0.7f) cell = 0.7f;
-
-	minx -= 2.f; miny -= 2.f; maxx += 2.f; maxy += 2.f;
-	const float bw = maxx - minx;
-	const float bh = maxy - miny;
-
-	int gw = (int)std::ceil(bw / cell) + 1;
-	int gh = (int)std::ceil(bh / cell) + 1;
-	if (gw < 4 || gh < 4)
-		return;
-	if (gw > 280) gw = 280;
-	if (gh > 280) gh = 280;
-
-	const std::size_t n = (std::size_t)gw * (std::size_t)gh;
-	static std::vector<std::uint8_t> mask;
-	mask.assign(n, 0);
-	for (const auto& t : tris)
-		RasterizeTriMask(mask, gw, gh, minx, miny, cell, t);
-
-	auto filled = [&](int x, int y) -> bool {
-		if (x < 0 || y < 0 || x >= gw || y >= gh)
-			return false;
-		return mask[(std::size_t)y * (std::size_t)gw + (std::size_t)x] != 0;
-	};
-
-	struct Edge { ImVec2 a, b; };
-	static std::vector<Edge> edges;
-	edges.clear();
-	if (edges.capacity() < 1024)
-		edges.reserve(1024);
-	static std::vector<ImVec2> joints;
-	joints.clear();
-	if (joints.capacity() < 512)
-		joints.reserve(512);
-
-	for (int y = 0; y < gh; ++y)
-	{
-		int x = 0;
-		while (x < gw)
-		{
-			if (!filled(x, y) || filled(x, y - 1))
-			{
-				++x;
-				continue;
-			}
-			const int x0 = x;
-			while (x + 1 < gw && filled(x + 1, y) && !filled(x + 1, y - 1))
-				++x;
-			const float py = miny + (float)y * cell;
-			edges.push_back({
-				ImVec2(minx + (float)x0 * cell, py),
-				ImVec2(minx + (float)(x + 1) * cell, py)
-			});
-			++x;
-		}
-		x = 0;
-		while (x < gw)
-		{
-			if (!filled(x, y) || filled(x, y + 1))
-			{
-				++x;
-				continue;
-			}
-			const int x0 = x;
-			while (x + 1 < gw && filled(x + 1, y) && !filled(x + 1, y + 1))
-				++x;
-			const float py = miny + (float)(y + 1) * cell;
-			edges.push_back({
-				ImVec2(minx + (float)x0 * cell, py),
-				ImVec2(minx + (float)(x + 1) * cell, py)
-			});
-			++x;
-		}
-	}
-	for (int x = 0; x < gw; ++x)
-	{
-		int y = 0;
-		while (y < gh)
-		{
-			if (!filled(x, y) || filled(x - 1, y))
-			{
-				++y;
-				continue;
-			}
-			const int y0 = y;
-			while (y + 1 < gh && filled(x, y + 1) && !filled(x - 1, y + 1))
-				++y;
-			const float px = minx + (float)x * cell;
-			edges.push_back({
-				ImVec2(px, miny + (float)y0 * cell),
-				ImVec2(px, miny + (float)(y + 1) * cell)
-			});
-			++y;
-		}
-		y = 0;
-		while (y < gh)
-		{
-			if (!filled(x, y) || filled(x + 1, y))
-			{
-				++y;
-				continue;
-			}
-			const int y0 = y;
-			while (y + 1 < gh && filled(x, y + 1) && !filled(x + 1, y + 1))
-				++y;
-			const float px = minx + (float)(x + 1) * cell;
-			edges.push_back({
-				ImVec2(px, miny + (float)y0 * cell),
-				ImVec2(px, miny + (float)(y + 1) * cell)
-			});
-			++y;
-		}
-	}
-
-	if (edges.empty())
-		return;
-
-	for (const auto& e : edges)
-	{
-		joints.push_back(e.a);
-		joints.push_back(e.b);
-	}
-
-	const float tsec = (float)ImGui::GetTime();
-	const float cx = minx + bw * 0.5f;
-	const float cy = miny + bh * 0.5f;
-
-	float fade = variables::ESP::meshChamsOutlineFade;
-	if (fade < 0.35f) fade = 0.35f;
-	if (fade > 3.f) fade = 3.f;
-
-	float glow = (std::max)(body_w, body_h) * 0.062f * fade;
-	if (glow < 7.f) glow = 7.f;
-	if (glow > 48.f) glow = 48.f;
-
-	float intensity = 0.78f * ca * (0.55f + 0.45f * (fade < 1.f ? fade : 1.f));
-	float glow_mul = 1.f;
-
-	switch (style)
-	{
-	case 1:
-	{
-		const float p = 0.55f + 0.45f * (0.5f + 0.5f * std::sin(tsec * 3.6f));
-		intensity *= 0.55f + 0.7f * p;
-		glow_mul = 0.75f + 0.45f * p;
-		break;
-	}
-	case 2:
-		intensity *= 0.85f;
-		break;
-	case 3:
-		glow_mul = 1.28f;
-		intensity *= 0.95f;
-		break;
-	default:
-		break;
-	}
-
-	glow *= glow_mul;
-
-	const ImDrawListFlags bak = dl->Flags;
-	dl->Flags |= ImDrawListFlags_AntiAliasedLines | ImDrawListFlags_AntiAliasedFill;
-
-	auto edge_mod = [&](const ImVec2& a, const ImVec2& b) -> float {
-		const float mx = (a.x + b.x) * 0.5f;
-		const float my = (a.y + b.y) * 0.5f;
-		if (style == 2)
-		{
-			const float phase = (mx + my) * 0.035f - tsec * 2.8f;
-			return 0.45f + 0.55f * (0.5f + 0.5f * std::sin(phase));
-		}
-		if (style == 3)
-		{
-			const float ang = std::atan2(my - cy, mx - cx);
-			return 0.5f + 0.5f * (0.5f + 0.5f * std::sin(ang * 4.f + tsec * 2.6f));
-		}
-		return 1.f;
-	};
-
-	for (const auto& e : edges)
-	{
-		const float mod = edge_mod(e.a, e.b);
-		SoftStroke(dl, e.a, e.b, glow, cr, cg, cb, intensity * mod);
-	}
-	const float brush_r = glow * 0.58f;
-	for (std::size_t i = 0; i < joints.size(); i += 4)
-	{
-		const ImVec2& p = joints[i];
-		float mod = 1.f;
-		if (style == 2)
-		{
-			const float phase = (p.x + p.y) * 0.035f - tsec * 2.8f;
-			mod = 0.45f + 0.55f * (0.5f + 0.5f * std::sin(phase));
-		}
-		else if (style == 3)
-		{
-			const float ang = std::atan2(p.y - cy, p.x - cx);
-			mod = 0.5f + 0.5f * (0.5f + 0.5f * std::sin(ang * 4.f + tsec * 2.6f));
-		}
-		SoftBrush(dl, p, brush_r, cr, cg, cb, intensity * 0.38f * mod);
-	}
-
-	dl->Flags = bak;
-}
-
-}
-
-const char* const* OutlineStyleNames()
-{
-	static const char* k_names[] = {
-		"soft breath",
-		"pulse wave",
-		"flow ribbon",
-		"neon swirl",
-	};
-	return k_names;
-}
-
-int OutlineStyleNameCount()
-{
-	return 4;
 }
 
 bool ExpandBounds(
@@ -1009,13 +593,13 @@ void Draw(
 	const Vector2& viewport,
 	float scale_x,
 	float scale_y,
-	ImU32 fill_col)
+	ImU32 fill_col,
+	bool full_detail)
 {
 	if (!g_Memory.IsValid(character))
 		return;
 
 	const bool use_shader = MeshDxShader::IsFrameValid();
-	const bool want_outline = !use_shader && variables::ESP::meshChamsOutline && dl != nullptr;
 	const bool want_fill_imgui = !use_shader && dl != nullptr;
 	if (!use_shader && !dl)
 		return;
@@ -1030,11 +614,11 @@ void Draw(
 	};
 	static std::unordered_map<std::uint64_t, PartsCache> s_parts;
 	static ULONGLONG s_parts_gc = 0;
-	if (now - s_parts_gc > 5000ull)
+	if (now - s_parts_gc > 10000ull)
 	{
 		for (auto it = s_parts.begin(); it != s_parts.end(); )
 		{
-			if (now - it->second.t > 5000ull)
+			if (now - it->second.t > 10000ull)
 				it = s_parts.erase(it);
 			else
 				++it;
@@ -1045,7 +629,7 @@ void Draw(
 	const std::vector<MeshParser::Entry>* parts_ptr = nullptr;
 	{
 		auto& pc = s_parts[character];
-		if (pc.parts.empty() || now - pc.t > 5000ull + (character % 1700ull))
+		if (pc.parts.empty() || now - pc.t > 10000ull + (character % 3000ull))
 		{
 			pc.parts = MeshParser::CollectDrawable(character);
 			pc.t = now;
@@ -1060,7 +644,6 @@ void Draw(
 		ResolveResult r;
 		ULONGLONG t{ 0 };
 	};
-
 
 	static std::unordered_map<std::uint64_t, CachedResolve> s_resolve;
 	static ULONGLONG s_cache_gc = 0;
@@ -1077,21 +660,15 @@ void Draw(
 	}
 
 	ImDrawListFlags bak = 0;
-	if (want_fill_imgui || want_outline)
+	if (want_fill_imgui)
 	{
 		bak = dl->Flags;
-		if (want_fill_imgui)
-			dl->Flags &= ~ImDrawListFlags_AntiAliasedFill;
+		dl->Flags &= ~ImDrawListFlags_AntiAliasedFill;
 	}
-
-	static std::vector<ScreenTri> outline_tris;
-	outline_tris.clear();
-	if (want_outline && outline_tris.capacity() < 4096)
-		outline_tris.reserve(4096);
 
 	static std::unordered_map<FitCacheKey, FitCacheVal, FitCacheKeyHash> s_fit;
 	static ULONGLONG s_fit_gc = 0;
-	if (now - s_fit_gc > 3000ull)
+	if (now - s_fit_gc > 15000ull)
 	{
 		s_fit.clear();
 		s_fit_gc = now;
@@ -1101,11 +678,32 @@ void Draw(
 
 	for (const auto& e : parts)
 	{
+
+		if (!full_detail &&
+			(e.kind == MeshParser::Kind::Accessory ||
+			 e.kind == MeshParser::Kind::Hair ||
+			 e.kind == MeshParser::Kind::Face))
+			continue;
 		BasePart bp(e.part);
 		Vector3 pos, sz;
 		Matrix4x4 rot;
 		if (!bp.GetFrameData(pos, rot, sz))
 			continue;
+
+		if (sz.x < 0.01f && sz.y < 0.01f && sz.z < 0.01f)
+			continue;
+
+		{
+			const float cw = pos.x * view.m[3][0] + pos.y * view.m[3][1] + pos.z * view.m[3][2] + view.m[3][3];
+			if (cw < 0.1f)
+				continue;
+			const float cx = pos.x * view.m[0][0] + pos.y * view.m[0][1] + pos.z * view.m[0][2] + view.m[0][3];
+			const float cy = pos.x * view.m[1][0] + pos.y * view.m[1][1] + pos.z * view.m[1][2] + view.m[1][3];
+			const float inv = 1.f / cw;
+			const float nx = cx * inv, ny = cy * inv;
+			if (nx < -2.f || nx > 2.f || ny < -2.f || ny > 2.f)
+				continue;
+		}
 
 		const bool is_acc =
 			e.kind == MeshParser::Kind::Accessory ||
@@ -1188,12 +786,6 @@ void Draw(
 					{
 						DrawBoxFallback(dl, pos, rot, sz, live_view, viewport, scale_x, scale_y, fill_col);
 					}
-					if (want_outline)
-					{
-						PushOutlineFromPartBox(
-							outline_tris, pos, rot, sz,
-							live_view, viewport, scale_x, scale_y);
-					}
 				}
 				continue;
 			}
@@ -1218,7 +810,7 @@ void Draw(
 		if (use_shader)
 			MeshDxShader::QueueMesh(rr.mesh_id, MakeWorld(pos, rot, ms, off));
 
-		if (!want_fill_imgui && !want_outline)
+		if (!want_fill_imgui)
 			continue;
 
 		const int vtx_count = (int)mesh->vertices.size();
@@ -1233,9 +825,6 @@ void Draw(
 		int fac_budget = want_fill_imgui ? 12000 : 1800;
 		if (fac_total > fac_budget)
 			fac_stride = (fac_total + fac_budget - 1) / fac_budget;
-
-
-
 
 		static std::vector<char> need;
 		static std::vector<ImVec2> screen;
@@ -1290,18 +879,7 @@ void Draw(
 		ImVec2 a = screen[i0], b = screen[i1], c = screen[i2];
 		if (want_fill_imgui)
 			dl->AddTriangleFilled(a, b, c, fill_col);
-			if (want_outline)
-				outline_tris.push_back({ a, b, c });
 		}
-	}
-
-	if (want_outline && !outline_tris.empty())
-	{
-		const float* oc = reinterpret_cast<const float*>(&variables::ESP::meshChamsOutlineColor);
-		DrawCharacterContour(
-			dl, outline_tris,
-			oc[0], oc[1], oc[2], oc[3],
-			variables::ESP::meshChamsOutlineStyle);
 	}
 
 	if (need_force_mcp)
@@ -1314,7 +892,7 @@ void Draw(
 		}
 	}
 
-	if ((want_fill_imgui || want_outline) && dl)
+	if (want_fill_imgui && dl)
 		dl->Flags = bak;
 }
 

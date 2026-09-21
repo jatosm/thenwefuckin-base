@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "../../../src/sdk/sdk.h"
 #include "../globals/globals.h"
 #include "../variables/variables.h"
@@ -11,6 +11,11 @@
 #include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
+#include <mutex>
+
+namespace PlayersTab {
+bool IsMarked(const std::string& n);
+}
 
 namespace PlayerCache {
 struct CachedPlayer {
@@ -29,10 +34,8 @@ struct CachedPlayer {
     float distance = 0.0f;
     bool isValid = false;
     bool isR6 = false;
-    int role = 0; 
+    int role = 0;
 };
-
-
 
 inline int ScanRole(std::uintptr_t characterAddr) {
     if (!characterAddr) return 0;
@@ -85,28 +88,32 @@ struct LimbAddrs {
 };
 
 inline std::unordered_map<std::uintptr_t, LimbAddrs> limbCache;
+inline std::mutex limbMutex;
 
-inline const LimbAddrs& GetLimbs(std::uintptr_t characterAddr) {
+inline LimbAddrs GetLimbs(std::uintptr_t characterAddr, bool validate = true) {
     static const LimbAddrs kEmpty{};
     if (!characterAddr)
         return kEmpty;
+    std::lock_guard<std::mutex> lk(limbMutex);
     auto it = limbCache.find(characterAddr);
     if (it != limbCache.end()) {
-        
-        
+
+        if (!validate)
+            return it->second;
         LimbAddrs& e = it->second;
-        bool ok = e.hrp && e.humanoid;
+        bool ok = e.hrp != 0;
         if (ok) {
             const auto hp = memory->read<std::uintptr_t>(e.hrp + Offsets::Instance::Parent);
-            const auto hh = memory->read<std::uintptr_t>(e.humanoid + Offsets::Instance::Parent);
-            ok = (hp == characterAddr && hh == characterAddr);
+            ok = (hp == characterAddr);
+            if (ok && e.humanoid) {
+                const auto hh = memory->read<std::uintptr_t>(e.humanoid + Offsets::Instance::Parent);
+                ok = (hh == characterAddr);
+            }
         }
         if (!ok) {
             limbCache.erase(it);
         } else {
-            
-            
-            
+
             RBX::RbxInstance ch{characterAddr};
             if (!e.head)
                 e.head = ch.FindChild("Head").Addr;
@@ -172,8 +179,8 @@ inline const LimbAddrs& GetLimbs(std::uintptr_t characterAddr) {
         l.rFoot = ch.FindChild("RightFoot").Addr;
     }
     l.humanoid = ch.FindChildByClass("Humanoid").Addr;
-    if (!l.hrp || !l.humanoid)
-        return kEmpty; 
+    if (!l.hrp)
+        return kEmpty;
     auto res = limbCache.emplace(characterAddr, l);
     return res.first->second;
 }
@@ -214,6 +221,7 @@ inline std::string GetWeaponFromViewModels(const std::string& playerName) {
 }
 
 inline void PruneLimbs(const std::unordered_set<std::uintptr_t>& alive) {
+    std::lock_guard<std::mutex> lk(limbMutex);
     for (auto it = limbCache.begin(); it != limbCache.end();) {
         if (alive.find(it->first) == alive.end())
             it = limbCache.erase(it);
@@ -235,40 +243,72 @@ inline void updateplayers() {
     }
     if (localRootPrim) {
         localPlayerPos = memory->read<RBX::Vec3>(localRootPrim + Offsets::Primitive::Position);
+
         for (auto& c : players) {
             if (!c.isValid)
                 continue;
-            c.health = memory->read<float>(c.humanoidAddr + Offsets::Humanoid::Health);
-            if (variables::ESP::deadCheck && c.health <= 0)
+            const auto cp = memory->read<std::uintptr_t>(c.characterAddr + Offsets::Instance::Parent);
+            if (!cp) {
                 c.isValid = false;
+                continue;
+            }
+            const auto rp = memory->read<std::uintptr_t>(c.rootPartAddr + Offsets::Instance::Parent);
+            if (rp != c.characterAddr) {
+                c.isValid = false;
+                continue;
+            }
+            if (c.humanoidAddr) {
+                const auto hpParent = memory->read<std::uintptr_t>(c.humanoidAddr + Offsets::Instance::Parent);
+                if (hpParent != c.characterAddr) {
+                    c.isValid = false;
+                    continue;
+                }
+                c.health = memory->read<float>(c.humanoidAddr + Offsets::Humanoid::Health);
+                if (c.health <= 0.0f) {
+                    c.isValid = false;
+                    continue;
+                }
+            }
         }
     }
     using Clock = std::chrono::steady_clock;
     static auto lastTopo = Clock::now() - std::chrono::seconds(10);
-    if (Clock::now() - lastTopo < std::chrono::milliseconds(100))
+    if (Clock::now() - lastTopo < std::chrono::milliseconds(500))
         return;
     lastTopo = Clock::now();
 
+    const bool needRole = variables::ESP::enabled && variables::ESP::flags && variables::ESP::flagSel[7];
+    const bool needTool = variables::ESP::enabled && (variables::ESP::tool || (variables::ESP::flags && variables::ESP::flagSel[3]));
+    static int topoTick = 0;
+    ++topoTick;
+    const bool rescanMeta = (topoTick % 4) == 0;
+
     auto localChar = Globals::localPlayer.GetModelRef();
-    if (!localChar.Addr) {
-        players.clear();
-        localRootPrim = 0;
-        return;
+    if (!localChar.Addr && Globals::workspace.Addr && Globals::localPlayer.Addr) {
+        localChar = Globals::workspace.FindChild(Globals::localPlayer.GetName());
+        if (!localChar.Addr) {
+            auto chars = Globals::workspace.FindChild("Characters");
+            if (chars.Addr)
+                localChar = chars.FindChild(Globals::localPlayer.GetName());
+        }
     }
-    auto localRoot = localChar.FindChild("HumanoidRootPart");
-    if (!localRoot.Addr) {
-        players.clear();
+    auto localRoot = localChar.Addr ? localChar.FindChild("HumanoidRootPart") : RBX::RbxInstance{0};
+    if (localRoot.Addr) {
+        localRootPrim = localRoot.GetPrimitivePtr();
+        localPlayerPos = localRoot.GetPos();
+    } else {
         localRootPrim = 0;
-        return;
+        if (Globals::camera.Addr) {
+            localPlayerPos = memory->read<RBX::Vec3>(Globals::camera.Addr + Offsets::Camera::Position);
+        }
     }
-    localRootPrim = localRoot.GetPrimitivePtr();
-    localPlayerPos = localRoot.GetPos();
-    localPlayerTeam = memory->read<std::uintptr_t>(Globals::localPlayer.Addr + Offsets::Player::Team);
+    localPlayerTeam = Globals::localPlayer.Addr ? memory->read<std::uintptr_t>(Globals::localPlayer.Addr + Offsets::Player::Team) : 0;
 
     auto list = Globals::players.GetChildList();
     std::unordered_set<std::uintptr_t> alive;
     alive.reserve(list.size() + 1);
-    alive.insert(localChar.Addr);
+    if (localChar.Addr)
+        alive.insert(localChar.Addr);
 
     for (auto& plr : players)
         plr.isValid = false;
@@ -279,6 +319,9 @@ inline void updateplayers() {
         const auto character = plr.GetModelRef();
         if (!character.Addr)
             continue;
+        const auto charParent = memory->read<std::uintptr_t>(character.Addr + Offsets::Instance::Parent);
+        if (!charParent)
+            continue;
         alive.insert(character.Addr);
         CachedPlayer* slot = nullptr;
         for (auto& c : players) {
@@ -288,41 +331,46 @@ inline void updateplayers() {
             }
         }
         if (slot && slot->characterAddr == character.Addr && slot->rootPartAddr) {
-            
-            
+
             const auto rp = memory->read<std::uintptr_t>(slot->rootPartAddr + Offsets::Instance::Parent);
             if (rp == character.Addr) {
                 const auto teamNow = memory->read<std::uintptr_t>(plr.Addr + Offsets::Player::Team);
                 slot->teamAddr = teamNow;
-                if (Keys::TeamCheckOn() && teamNow && teamNow == localPlayerTeam) {
+                if (Keys::TeamCheckOn() && teamNow && teamNow == localPlayerTeam && !PlayersTab::IsMarked(slot->name)) {
                     slot->isValid = false;
                     continue;
                 }
-                slot->health = memory->read<float>(slot->humanoidAddr + Offsets::Humanoid::Health);
-                if (variables::ESP::deadCheck && slot->health <= 0) {
-                    slot->isValid = false;
-                    continue;
+                if (slot->humanoidAddr) {
+                    const auto hpParent = memory->read<std::uintptr_t>(slot->humanoidAddr + Offsets::Instance::Parent);
+                    if (hpParent != character.Addr) {
+                        slot->isValid = false;
+                        continue;
+                    }
+                    slot->health = memory->read<float>(slot->humanoidAddr + Offsets::Humanoid::Health);
+                    if (slot->health <= 0.0f) {
+                        slot->isValid = false;
+                        continue;
+                    }
                 }
                 {
-                    int nr = ScanRole(character.Addr);
-                    DbgRoleChange(plr.Addr, slot->name, slot->role, nr);
-                    slot->role = nr;
-                }
-                
-                static unsigned toolTick = 0;
-                if ((toolTick++ % 20) == 0) {
-                    slot->tool = "None";
-                    for (auto& child : RBX::RbxInstance(character.Addr).GetChildList()) {
-                        if (child.GetClass() == "Tool") {
-                            slot->tool = child.GetName();
-                            break;
+                    if (needRole && rescanMeta) {
+                        int nr = ScanRole(character.Addr);
+                        DbgRoleChange(plr.Addr, slot->name, slot->role, nr);
+                        slot->role = nr;
+                    }
+                    if (needTool && rescanMeta) {
+                        slot->tool = "None";
+                        for (auto& child : RBX::RbxInstance(character.Addr).GetChildList()) {
+                            if (child.GetClass() == "Tool") {
+                                slot->tool = child.GetName();
+                                break;
+                            }
                         }
                     }
                 }
                 slot->isValid = true;
                 alive.insert(character.Addr);
-                
-                
+
                 if (!slot->headAddr) {
                     const auto& limbs = GetLimbs(character.Addr);
                     slot->headAddr = limbs.head;
@@ -331,13 +379,14 @@ inline void updateplayers() {
             }
         }
         const auto& limbs = GetLimbs(character.Addr);
-        if (!limbs.hrp || !limbs.humanoid)
+        if (!limbs.hrp)
             continue;
-        const float hp = memory->read<float>(limbs.humanoid + Offsets::Humanoid::Health);
-        if (variables::ESP::deadCheck && hp <= 0)
+        const float hp = limbs.humanoid ? memory->read<float>(limbs.humanoid + Offsets::Humanoid::Health) : 100.0f;
+        if (limbs.humanoid && hp <= 0.0f)
             continue;
         const auto team = memory->read<std::uintptr_t>(plr.Addr + Offsets::Player::Team);
-        if (Keys::TeamCheckOn() && team && team == localPlayerTeam)
+        const std::string curPlrName = plr.GetName();
+        if (Keys::TeamCheckOn() && team && team == localPlayerTeam && !PlayersTab::IsMarked(curPlrName))
             continue;
         CachedPlayer c{};
         c.playerAddr = plr.Addr;
@@ -347,16 +396,19 @@ inline void updateplayers() {
         c.headAddr = limbs.head;
         c.teamAddr = team;
         c.teamName = team ? RBX::RbxInstance(team).GetName() : std::string{};
-        c.name = plr.GetName();
-        c.health = hp;        c.maxHealth = memory->read<float>(limbs.humanoid + Offsets::Humanoid::MaxHealth);
+        c.name = curPlrName;
+        c.health = hp;
+        c.maxHealth = limbs.humanoid ? memory->read<float>(limbs.humanoid + Offsets::Humanoid::MaxHealth) : 100.0f;
         c.isR6 = limbs.r6;
         c.isValid = true;
-        c.role = ScanRole(character.Addr);
+        c.role = needRole ? ScanRole(character.Addr) : 0;
         if (c.role != 0) DbgRoleChange(plr.Addr, c.name, 0, c.role);
-        for (auto& child : RBX::RbxInstance(character.Addr).GetChildList()) {
-            if (child.GetClass() == "Tool") {
-                c.tool = child.GetName();
-                break;
+        if (needTool) {
+            for (auto& child : RBX::RbxInstance(character.Addr).GetChildList()) {
+                if (child.GetClass() == "Tool") {
+                    c.tool = child.GetName();
+                    break;
+                }
             }
         }
         if (slot)

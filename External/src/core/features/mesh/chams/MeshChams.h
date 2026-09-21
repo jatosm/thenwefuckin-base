@@ -16,10 +16,8 @@ void Draw(
 	const Mesh::Vector2& viewport,
 	float scale_x,
 	float scale_y,
-	ImU32 fill_col);
-
-const char* const* OutlineStyleNames();
-int OutlineStyleNameCount();
+	ImU32 fill_col,
+	bool full_detail = true);
 
 bool ExpandBounds(
 	std::uint64_t character,

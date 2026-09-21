@@ -5,6 +5,8 @@
 
 LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
+ImTextureID OverlayWarnIcon();
+
 class OverlayWindow {
 private:
     HWND windowHandle;
@@ -14,7 +16,8 @@ private:
     IDXGISwapChain* swapChain;
     ID3D11RenderTargetView* renderTarget;
 
-    void SetupD3D11(HWND hwnd);
+    void ReleasePartialD3D();
+    bool SetupD3D11(HWND hwnd);
     void CleanupD3D11();
 
 public:
@@ -23,6 +26,7 @@ public:
 public:
     OverlayWindow();
     bool Initialize();
+    void PumpMessages();
     void BeginFrame();
     void RenderMenu();
     void render(ImDrawList* drawList);

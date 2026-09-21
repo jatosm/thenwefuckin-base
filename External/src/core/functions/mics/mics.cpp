@@ -50,7 +50,6 @@ void TickFov() {
     }
 }
 
-
 void TickLighting() {
     WorldVisuals::TickLighting();
 }

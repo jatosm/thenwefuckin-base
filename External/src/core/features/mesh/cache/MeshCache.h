@@ -32,7 +32,6 @@ struct CachedMesh {
 	std::vector<MeshFace> faces;
 };
 
-
 class MeshCache {
 public:
 	static MeshCache& Get();

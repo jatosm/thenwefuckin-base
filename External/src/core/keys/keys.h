@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <windows.h>
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
 #define IMGUI_DEFINE_MATH_OPERATORS
@@ -59,7 +59,7 @@ void ProcessKeybind(int key, int mode, T& feature, bool& last) {
 inline bool Gate(int key, int mode, bool& tog, bool& was) {
     if (mode == 2) return true;
     if (key == 0) return true;
-    
+
     static bool toggle_states[512]{};
     static bool last_states[512]{};
     int idx = key;
