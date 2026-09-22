@@ -29,4 +29,7 @@ void WriteMemoryAngles(const RBX::Vec3& targetWorld);
 void RenderTracer(ImDrawList* dl);
 void RenderPredictionLine(ImDrawList* dl);
 void RunAimbot(const RBX::Mat4& view);
+bool Is360Active();
+float EffectiveFov(float base);
+void ApplyGlobalPrediction(RBX::Vec3& world, std::uintptr_t rootPartAddr);
 }

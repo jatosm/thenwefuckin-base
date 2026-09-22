@@ -65,7 +65,21 @@ void Loop() {
 }
 
 void RenderLocalMenu() {
-    float ly = 46.0f;
+    ImVec2 mBase = ImGui::GetWindowPos();
+    ImVec2 mLMin = mBase + ImVec2(6.0f, 40.0f);
+    ImVec2 mLMax = mBase + ImVec2(6.0f + 290.0f, 40.0f + 340.0f);
+    ImVec2 mMp = ImGui::GetIO().MousePos;
+    static float localScroll = 0.f;
+    if (mMp.x >= mLMin.x && mMp.x <= mLMax.x && mMp.y >= mLMin.y && mMp.y <= mLMax.y &&
+        ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+        float wh = ImGui::GetIO().MouseWheel;
+        if (wh != 0.f && !imGuiCustom::PopupBlocking()) localScroll -= wh * 22.0f;
+    }
+    if (localScroll < 0.f) localScroll = 0.f;
+    ImDrawList* mFg = ImGui::GetWindowDrawList();
+    mFg->PushClipRect(mLMin, mLMax, true);
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 0.0f);
+    float ly = 46.0f - localScroll;
     imGuiCustom::Checkbox("JumpPower", &variables::Local::jumpEnabled, ImVec2(12.0f, ly));
     imGuiCustom::Keybind("jump_key", &variables::Local::jumpKey, ImVec2(222.0f, ly - 1.0f), ImVec2(68.0f, 13.0f), &variables::Local::jumpKeyMode);
     ly += imGuiCustom::CheckStep();
@@ -98,11 +112,29 @@ void RenderLocalMenu() {
         imGuiCustom::SliderFloat("gravity_value", &variables::Misc::gravityValue, 0.0f, 500.0f, ImVec2(12.0f, ly + imGuiCustom::SliderTop()), 272.0f, "Gravity", "%.0f");
         ly += imGuiCustom::SliderStep();
     }
-
+    float localContent = ly + localScroll - 46.0f;
+    float localMaxScroll = localContent - 340.0f + 6.0f; if (localMaxScroll < 0.f) localMaxScroll = 0.f;
+    if (localScroll > localMaxScroll) localScroll = localMaxScroll;
+    mFg->PopClipRect();
+    ImGui::PopStyleVar();
 }
 
 void RenderMiscMenu() {
-    float ry = 46.0f;
+    ImVec2 mBase = ImGui::GetWindowPos();
+    ImVec2 mRMin = mBase + ImVec2(305.0f, 40.0f);
+    ImVec2 mRMax = mBase + ImVec2(305.0f + 290.0f, 40.0f + 340.0f);
+    ImVec2 mMp = ImGui::GetIO().MousePos;
+    static float miscScroll = 0.f;
+    if (mMp.x >= mRMin.x && mMp.x <= mRMax.x && mMp.y >= mRMin.y && mMp.y <= mRMax.y &&
+        ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+        float wh = ImGui::GetIO().MouseWheel;
+        if (wh != 0.f && !imGuiCustom::PopupBlocking()) miscScroll -= wh * 22.0f;
+    }
+    if (miscScroll < 0.f) miscScroll = 0.f;
+    ImDrawList* mFgR = ImGui::GetWindowDrawList();
+    mFgR->PushClipRect(mRMin, mRMax, true);
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 0.0f);
+    float ry = 46.0f - miscScroll;
     imGuiCustom::Checkbox("Team Check", &variables::teamCheck, ImVec2(311.0f, ry));
     imGuiCustom::Keybind("team_key", &variables::teamCheckKey, ImVec2(505.0f, ry - 1.0f), ImVec2(68.0f, 13.0f), &variables::teamCheckKeyMode);
     ry += imGuiCustom::CheckStep();
@@ -132,6 +164,34 @@ void RenderMiscMenu() {
         ry += imGuiCustom::SliderStep();
         imGuiCustom::SliderFloat("fly_damping", &variables::Movement::flyDamping, 0.0f, 50.0f, ImVec2(311.0f, ry + imGuiCustom::SliderTop()), 272.0f, "Damping", "%.1f");
         ry += imGuiCustom::SliderStep();
+        ry += imGuiCustom::ComboTop();
+        const char* flyModes[] = {"Velocity", "CFrame", "CFrame Lock", "Hover"};
+        imGuiCustom::Combo("fly_mode", &variables::Movement::flyMethod, flyModes, 4, ImVec2(311.0f, ry), 158.0f, "Fly Mode:");
+        ry += imGuiCustom::ComboStep();
+    }
+    imGuiCustom::Checkbox("Spiderman", &variables::Movement::spiderman, ImVec2(311.0f, ry));
+    ry += imGuiCustom::CheckStep();
+    imGuiCustom::Checkbox("No Fall Damage", &variables::Movement::noFallDamage, ImVec2(311.0f, ry));
+    ry += imGuiCustom::CheckStep();
+    imGuiCustom::Checkbox("Hitbox Expander", &variables::Movement::hitboxExpander, ImVec2(311.0f, ry));
+    ry += imGuiCustom::CheckStep();
+    if (variables::Movement::hitboxExpander) {
+        imGuiCustom::SliderFloat("hitbox_x", &variables::Movement::hitboxX, 1.0f, 50.0f, ImVec2(311.0f, ry + imGuiCustom::SliderTop()), 272.0f, "Size X", "%.1f");
+        ry += imGuiCustom::SliderStep();
+        imGuiCustom::SliderFloat("hitbox_y", &variables::Movement::hitboxY, 1.0f, 50.0f, ImVec2(311.0f, ry + imGuiCustom::SliderTop()), 272.0f, "Size Y", "%.1f");
+        ry += imGuiCustom::SliderStep();
+        imGuiCustom::SliderFloat("hitbox_z", &variables::Movement::hitboxZ, 1.0f, 50.0f, ImVec2(311.0f, ry + imGuiCustom::SliderTop()), 272.0f, "Size Z", "%.1f");
+        ry += imGuiCustom::SliderStep();
+        imGuiCustom::Checkbox("HB Team Check", &variables::Movement::hitboxTeamCheck, ImVec2(311.0f, ry));
+        ry += imGuiCustom::CheckStep();
+        imGuiCustom::Checkbox("HB Knock Check", &variables::Movement::hitboxKnockCheck, ImVec2(311.0f, ry));
+        ry += imGuiCustom::CheckStep();
+    }
+    imGuiCustom::Checkbox("Tickrate", &variables::Movement::tickrate, ImVec2(311.0f, ry));
+    ry += imGuiCustom::CheckStep();
+    if (variables::Movement::tickrate) {
+        imGuiCustom::SliderFloat("tickrate_val", &variables::Movement::tickrateValue, 60.0f, 500.0f, ImVec2(311.0f, ry + imGuiCustom::SliderTop()), 272.0f, "Rate", "%.0f");
+        ry += imGuiCustom::SliderStep();
     }
 
     imGuiCustom::Checkbox("Noclip", &variables::Movement::noclip, ImVec2(311.0f, ry));
@@ -152,5 +212,10 @@ void RenderMiscMenu() {
         imGuiCustom::SliderFloat("fcam_sens", &variables::Freecam::sensitivity, 0.001f, 0.02f, ImVec2(311.0f, ry + imGuiCustom::SliderTop()), 272.0f, "Sensitivity", "%.4f");
         ry += imGuiCustom::SliderTop() + 15.0f;
     }
+    float miscContent = ry + miscScroll - 46.0f;
+    float miscMaxScroll = miscContent - 340.0f + 6.0f; if (miscMaxScroll < 0.f) miscMaxScroll = 0.f;
+    if (miscScroll > miscMaxScroll) miscScroll = miscMaxScroll;
+    mFgR->PopClipRect();
+    ImGui::PopStyleVar();
 }
 }

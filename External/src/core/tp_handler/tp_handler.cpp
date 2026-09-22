@@ -46,7 +46,7 @@ bool refresh() {
 void Core::tp_handler::thread() {
     using namespace std::chrono_literals;
     while (Globals::running) {
-        if (!memory->IsConnected() || !FindWindowW(nullptr, L"Roblox")) {
+        if (!memory->IsConnected()) {
             Globals::running = false;
             break;
         }

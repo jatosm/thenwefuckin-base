@@ -11,6 +11,7 @@
 #include <thread>
 #include <chrono>
 #include <cmath>
+#include <unordered_map>
 
 namespace Movement {
 namespace {
@@ -112,6 +113,34 @@ void TickFly(bool& gravOver, float& gravBackup) {
     }
     float damping = (std::max)(variables::Movement::flyDamping,0.0f);
     float cdt = std::clamp(dt,0.001f,0.05f);
+    const int method = variables::Movement::flyMethod;
+    if (method == 1 || method == 2) {
+        if (target.x == 0 && target.y == 0 && target.z == 0) {
+            SetVel(prim, rbx::vector3_t(0,0,0));
+            curVel = {0,0,0};
+            return;
+        }
+        rbx::vector3_t dir = target;
+        float len = dir.magnitude();
+        if (len > 1e-6f) dir = dir * (1.0f / len);
+        rbx::vector3_t pos = memory->read<rbx::vector3_t>(prim + Offsets::Primitive::Position);
+        rbx::vector3_t next = pos + dir * (spd * cdt);
+        memory->write<rbx::vector3_t>(prim + Offsets::Primitive::Position, next);
+        if (method == 2 && cam) {
+            for (int i = 0; i < 9; ++i) {
+                float v = memory->read<float>(cam + Offsets::Camera::Rotation + (uint64_t)i * sizeof(float));
+                memory->write<float>(prim + Offsets::Primitive::Rotation + (uint64_t)i * sizeof(float), v);
+            }
+        }
+        SetVel(prim, rbx::vector3_t(0,0,0));
+        curVel = {0,0,0};
+        return;
+    }
+    if (method == 3) {
+        SetVel(prim, rbx::vector3_t(0,0,0));
+        curVel = {0,0,0};
+        return;
+    }
     if (damping>0) {
         float alpha = 1.0f - std::exp(-damping * cdt);
         curVel = curVel + (target - curVel) * alpha;
@@ -161,8 +190,82 @@ void TickNoclip(bool& wasOn) {
         SetCollide(p, false);
 }
 
-void TickBhop() {
+void TickSpider() {
+    if (!variables::Movement::spiderman) return;
+    auto localChar = Globals::localPlayer.GetModelRef();
+    if (!localChar.Addr) return;
+    const auto& limbs = PlayerCache::GetLimbs(localChar.Addr);
+    if (!limbs.hrp) return;
+    std::uintptr_t prim = memory->read<std::uintptr_t>(limbs.hrp + Offsets::BasePart::Primitive);
+    if (!prim) return;
+    rbx::vector3_t vel = memory->read<rbx::vector3_t>(prim + Offsets::Primitive::AssemblyLinearVelocity);
+    if (std::abs(vel.x) > 0.5f || std::abs(vel.z) > 0.5f) {
+        vel.y = 30.0f;
+        memory->write<rbx::vector3_t>(prim + Offsets::Primitive::AssemblyLinearVelocity, vel);
+    }
+}
+
+void TickNoFall() {
+    if (!variables::Movement::noFallDamage) return;
+    auto localChar = Globals::localPlayer.GetModelRef();
+    if (!localChar.Addr) return;
+    const auto& limbs = PlayerCache::GetLimbs(localChar.Addr);
+    if (!limbs.hrp) return;
+    std::uintptr_t prim = memory->read<std::uintptr_t>(limbs.hrp + Offsets::BasePart::Primitive);
+    if (!prim) return;
+    rbx::vector3_t vel = memory->read<rbx::vector3_t>(prim + Offsets::Primitive::AssemblyLinearVelocity);
+    if (vel.y < -50.0f) {
+        vel.y = 0.0f;
+        memory->write<rbx::vector3_t>(prim + Offsets::Primitive::AssemblyLinearVelocity, vel);
+    }
+}
+
+void TickHitbox() {
+    static std::unordered_map<std::uintptr_t, rbx::vector3_t> orig;
+    auto applyTo = [&](PlayerCache::CachedPlayer& p) {
+        if (!p.isValid || !p.rootPartAddr) return;
+        if (p.playerAddr == (std::uintptr_t)Globals::localPlayer.Addr) return;
+        if (variables::Movement::hitboxTeamCheck && Keys::TeamCheckOn() && p.teamAddr &&
+            (p.teamAddr == PlayerCache::localPlayerTeam)) return;
+        if (variables::Movement::hitboxKnockCheck && p.maxHealth > 0.0f && p.health <= 0.0f) return;
+        std::uintptr_t prim = memory->read<std::uintptr_t>(p.rootPartAddr + Offsets::BasePart::Primitive);
+        if (!prim) return;
+        if (!orig.count(prim)) orig[prim] = memory->read<rbx::vector3_t>(prim + Offsets::Primitive::Size);
+        rbx::vector3_t sz{variables::Movement::hitboxX, variables::Movement::hitboxY, variables::Movement::hitboxZ};
+        memory->write<rbx::vector3_t>(prim + Offsets::Primitive::Size, sz);
+        uint8_t flags = memory->read<uint8_t>(prim + Offsets::Primitive::Flags);
+        flags = (uint8_t)(flags & ~(uint8_t)Offsets::PrimitiveFlags::CanCollide);
+        memory->write<uint8_t>(prim + Offsets::Primitive::Flags, flags);
+    };
+    if (!variables::Movement::hitboxExpander) {
+        if (!orig.empty()) {
+            for (auto& kv : orig) {
+                if (!kv.first) continue;
+                memory->write<rbx::vector3_t>(kv.first + Offsets::Primitive::Size, kv.second);
+            }
+            orig.clear();
+        }
+        return;
+    }
+    for (auto& p : PlayerCache::players) applyTo(p);
+}
+
+void TickRate() {
     static bool was = false;
+    std::uintptr_t world = 0;
+    if (Globals::workspace.Addr)
+        world = memory->read<std::uintptr_t>(Globals::workspace.Addr + Offsets::Workspace::World);
+    if (variables::Movement::tickrate && world) {
+        float v = std::clamp(variables::Movement::tickrateValue, 0.0f, 1000.0f);
+        memory->write<float>(world + Offsets::World::worldStepsPerSec, v);
+        was = true;
+    } else if (was) {
+        if (world) memory->write<float>(world + Offsets::World::worldStepsPerSec, 240.0f);
+        was = false;
+    }
+}
+
+void TickBhop() {    static bool was = false;
     static float backup = 16.0f;
     static std::uintptr_t backupHum = 0;
     static bool tog = false;
@@ -278,6 +381,10 @@ void Loop() {
             TickFly(gravOver,gravBackup);
             TickNoclip(noclipOn);
             TickBhop();
+            TickSpider();
+            TickNoFall();
+            TickHitbox();
+            TickRate();
             TickHip();
             TickWalk();
             TickGravity();

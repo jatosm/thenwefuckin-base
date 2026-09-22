@@ -89,6 +89,7 @@
     <ClInclude Include="src\memory\memory.h" />
     <ClInclude Include="src\render\menu\library.h" />
     <ClInclude Include="src\render\render.h" />
+    <ClInclude Include="src\core\logger\logger.h" />
     <ClInclude Include="src\sdk\math.h" />
     <ClInclude Include="src\sdk\offsets.h" />
     <ClInclude Include="src\sdk\sdk.h" />

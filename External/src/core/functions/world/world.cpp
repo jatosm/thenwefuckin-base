@@ -427,7 +427,8 @@ inline void tick(uintptr_t addr) {
     }
     if (!any_lighting && lighting.captured && lighting.address == addr)
         lighting = {};
-    force_lighting_dirty();
+    if (any_lighting || clock_time_active || brightness_active || ambient_active || fog_active || exposure_active)
+        force_lighting_dirty();
     (void)addr; (void)any_lighting;
 }
 

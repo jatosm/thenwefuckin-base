@@ -525,6 +525,117 @@ void DumpImages() {
     }).detach();
 }
 
+struct DecompiledScript {
+    std::string name;
+    std::string text;
+    bool open = true;
+};
+std::vector<DecompiledScript> s_scripts;
+std::mutex s_scriptsMutex;
+
+std::vector<uint8_t> ReadScriptBytes(std::uintptr_t scriptAddr) {
+    std::vector<uint8_t> out;
+    if (!scriptAddr) return out;
+    const std::uintptr_t bc = memory->read<std::uintptr_t>(scriptAddr + Offsets::LocalScript::ByteCode);
+    if (!bc) return out;
+    const std::uintptr_t ptr = memory->read<std::uintptr_t>(bc + Offsets::ByteCode::Pointer);
+    const std::uint32_t sz = memory->read<std::uint32_t>(bc + Offsets::ByteCode::Size);
+    if (!ptr || sz == 0 || sz > 8 * 1024 * 1024) return out;
+    out.resize(sz);
+    if (!memory->read_raw(ptr, out.data(), sz)) out.clear();
+    return out;
+}
+
+std::string HexDisassemble(const std::vector<uint8_t>& bytes, const std::string& name) {
+    std::string s;
+    s.reserve(bytes.size() * 3 + 256);
+    char h[128];
+    std::snprintf(h, sizeof(h), "-- disassembly of %s (%zu bytes)\n-- raw luau bytecode hex dump\n\n", name.c_str(), bytes.size());
+    s += h;
+    for (size_t i = 0; i < bytes.size(); i += 16) {
+        char off[16];
+        std::snprintf(off, sizeof(off), "%08zX  ", i);
+        s += off;
+        for (size_t j = 0; j < 16; ++j) {
+            if (i + j < bytes.size()) {
+                char b[4];
+                std::snprintf(b, sizeof(b), "%02X ", bytes[i + j]);
+                s += b;
+            } else s += "   ";
+        }
+        s += " |";
+        for (size_t j = 0; j < 16 && i + j < bytes.size(); ++j) {
+            char c = (char)bytes[i + j];
+            s += (c >= 32 && c < 127) ? c : '.';
+        }
+        s += "|\n";
+        if (s.size() > 200000) { s += "\n-- truncated --\n"; break; }
+    }
+    return s;
+}
+
+void SaveAndShowScript(const std::string& name, const std::vector<uint8_t>& bytes, bool disassemble) {
+    char* up = nullptr;
+    size_t len = 0;
+    _dupenv_s(&up, &len, "USERPROFILE");
+    std::string dir = up ? std::string(up) : std::string("C:\\Users\\Public");
+    if (up) free(up);
+    dir += "\\Desktop\\jatos dumps\\scripts\\";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    std::string safe;
+    for (char c : name) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') safe.push_back(c);
+        else if (c == ' ') safe.push_back('_');
+        if (safe.size() >= 48) break;
+    }
+    if (safe.empty()) safe = "script";
+    if (disassemble) {
+        std::string txt = HexDisassemble(bytes, name);
+        FILE* f = nullptr;
+        fopen_s(&f, (dir + safe + ".dis.txt").c_str(), "w");
+        if (f) { std::fwrite(txt.data(), 1, txt.size(), f); std::fclose(f); }
+        std::lock_guard<std::mutex> lk(s_scriptsMutex);
+        s_scripts.push_back({name + " [disassembly]", txt, true});
+    } else {
+        FILE* f = nullptr;
+        fopen_s(&f, (dir + safe + ".luauc").c_str(), "wb");
+        if (f) { std::fwrite(bytes.data(), 1, bytes.size(), f); std::fclose(f); }
+        std::string txt = "-- decompile of " + name + " (" + std::to_string(bytes.size()) + " bytes)\n";
+        txt += "-- NOTE: no luau decompiler backend linked; raw bytecode saved to jatos dumps\\scripts\\" + safe + ".luauc\n";
+        txt += "-- printable strings found in bytecode:\n\n";
+        std::string cur;
+        for (uint8_t b : bytes) {
+            if (b >= 32 && b < 127) cur.push_back((char)b);
+            else {
+                if (cur.size() >= 4) { txt += "\"" + cur + "\"\n"; }
+                cur.clear();
+            }
+            if (txt.size() > 200000) { txt += "\n-- truncated --\n"; break; }
+        }
+        if (cur.size() >= 4) txt += "\"" + cur + "\"\n";
+        std::lock_guard<std::mutex> lk(s_scriptsMutex);
+        s_scripts.push_back({name + " [decompile]", txt, true});
+    }
+}
+
+void RenderScriptWindows() {
+    std::lock_guard<std::mutex> lk(s_scriptsMutex);
+    for (auto& sc : s_scripts) {
+        if (!sc.open) continue;
+        ImGui::SetNextWindowSize(ImVec2(560, 420), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin(sc.name.c_str(), &sc.open)) {
+            ImGui::TextDisabled("%zu chars", sc.text.size());
+            ImGui::BeginChild("##scripttxt", ImVec2(0, 0), true);
+            ImGui::TextUnformatted(sc.text.c_str());
+            ImGui::EndChild();
+        }
+        ImGui::End();
+    }
+    s_scripts.erase(std::remove_if(s_scripts.begin(), s_scripts.end(),
+        [](const DecompiledScript& d) { return !d.open; }), s_scripts.end());
+}
+
 void DrawNode(RBX::RbxInstance inst, RBX::RbxInstance& selected, float iconSize) {
     if (inst.Addr == 0 || g_rendered > 1500)
         return;
@@ -920,7 +1031,51 @@ void RenderWindow(ID3D11Device* device) {
                 DumpAll();
             if (doImgs)
                 DumpImages();
-            ImGui::SetCursorScreenPos(ImVec2(px, py + 52.f));
+            {
+                const std::string cls = selected.Addr ? selected.GetClass() : "";
+                const bool isScript = cls.find("Script") != std::string::npos;
+                bool doDecomp = false, doDis = false;
+                ImGui::PushID("exp_decomp");
+                ImGui::SetCursorScreenPos(ImVec2(px, py + 52.f));
+                ImGui::PushStyleColor(ImGuiCol_Button, imGuiCustom::ColorU32(theme.ControlBg));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, imGuiCustom::ColorU32(theme.ControlInactive));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, imGuiCustom::ColorU32(theme.ControlInactive));
+                ImGui::PushStyleColor(ImGuiCol_Text, imGuiCustom::ColorU32(theme.TextBright));
+                ImGui::BeginDisabled(!isScript);
+                doDecomp = ImGui::Button("Decompile", ImVec2(bw, 20.f));
+                ImGui::EndDisabled();
+                ImGui::PopStyleColor(4);
+                ImGui::PopID();
+                ImGui::PushID("exp_disas");
+                ImGui::SetCursorScreenPos(ImVec2(px + bw + 6.f, py + 52.f));
+                ImGui::PushStyleColor(ImGuiCol_Button, imGuiCustom::ColorU32(theme.ControlBg));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, imGuiCustom::ColorU32(theme.ControlInactive));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, imGuiCustom::ColorU32(theme.ControlInactive));
+                ImGui::PushStyleColor(ImGuiCol_Text, imGuiCustom::ColorU32(theme.TextBright));
+                ImGui::BeginDisabled(!isScript);
+                doDis = ImGui::Button("Disassemble", ImVec2(bw, 20.f));
+                ImGui::EndDisabled();
+                ImGui::PopStyleColor(4);
+                ImGui::PopID();
+                if (!isScript) {
+                    ImGui::SetCursorScreenPos(ImVec2(px, py + 78.f));
+                    ImGui::TextDisabled("Select a Script for decompiler");
+                }
+                if ((doDecomp || doDis) && selected.Addr) {
+                    std::string nm = selected.GetName();
+                    if (nm.empty()) nm = cls;
+                    std::vector<uint8_t> bytes = ReadScriptBytes(selected.Addr);
+                    if (bytes.empty()) {
+                        std::lock_guard<std::mutex> lk(s_scriptsMutex);
+                        s_scripts.push_back({nm + (doDis ? " [disassembly]" : " [decompile]"),
+                            "-- failed to read bytecode (empty or unreadable) --", true});
+                    } else {
+                        SaveAndShowScript(nm, bytes, doDis);
+                    }
+                }
+            }
+            RenderScriptWindows();
+            ImGui::SetCursorScreenPos(ImVec2(px, py + 104.f));
             ImGui::Dummy(ImVec2(1, 1));
         }
     }

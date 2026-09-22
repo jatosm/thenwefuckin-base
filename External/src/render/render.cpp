@@ -2,6 +2,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #endif
 #include "render.h"
+#include "../core/logger/logger.h"
 #include "menu/CascadiaMonoBL.c"
 #include <dwmapi.h>
 #include <dxgi1_2.h>
@@ -105,14 +106,31 @@ static bool LoadWarnIcon(ID3D11Device* dev) {
 LRESULT CALLBACK OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
         return true;
-    if (msg == WM_DESTROY) {
-        PostQuitMessage(0);
+    switch (msg) {
+    case WM_SYSCOMMAND:
+        if ((wParam & 0xfff0) == SC_KEYMENU)
+            return 0;
+        break;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_NCPAINT:
+        return 0;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        BeginPaint(hWnd, &ps);
+        EndPaint(hWnd, &ps);
         return 0;
     }
-    if (msg == WM_SIZE) {
+    case WM_CLOSE:
+        return 0;
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        return 0;
+    case WM_SIZE: {
         if (g_overlayWnd && wParam != SIZE_MINIMIZED)
             g_overlayWnd->ResizeBuffers((UINT)LOWORD(lParam), (UINT)HIWORD(lParam));
         return 0;
+    }
     }
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }
@@ -126,6 +144,14 @@ void OverlayWindow::ReleasePartialD3D() {
     if (swapChain) { swapChain->Release(); swapChain = nullptr; }
     if (d3dContext) { d3dContext->Release(); d3dContext = nullptr; }
     if (d3dDevice) { d3dDevice->Release(); d3dDevice = nullptr; }
+}
+
+static HRESULT SafeD3D11Create(DXGI_SWAP_CHAIN_DESC* sd, D3D_FEATURE_LEVEL* levels, IDXGISwapChain** sc, ID3D11Device** dev, D3D_FEATURE_LEVEL* obtained, ID3D11DeviceContext** ctx, D3D_DRIVER_TYPE type) {
+    __try {
+        return D3D11CreateDeviceAndSwapChain(nullptr, type, nullptr, 0, levels, 2, D3D11_SDK_VERSION, sd, sc, dev, obtained, ctx);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return E_FAIL;
+    }
 }
 
 bool OverlayWindow::SetupD3D11(HWND hwnd) {
@@ -143,17 +169,20 @@ bool OverlayWindow::SetupD3D11(HWND hwnd) {
     HRESULT hr = E_FAIL;
 
     sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH | DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
-    hr = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, levels, 2, D3D11_SDK_VERSION, &sd, &swapChain, &d3dDevice, &obtainedLevel, &d3dContext);
+    hr = SafeD3D11Create(&sd, levels, &swapChain, &d3dDevice, &obtainedLevel, &d3dContext, D3D_DRIVER_TYPE_HARDWARE);
+    Logger::logf("RENDER", "D3D11 HARDWARE+TEARING hr=0x%X", (unsigned)hr);
 
     if (FAILED(hr) || !swapChain || !d3dDevice || !d3dContext) {
         ReleasePartialD3D();
         sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
-        hr = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, levels, 2, D3D11_SDK_VERSION, &sd, &swapChain, &d3dDevice, &obtainedLevel, &d3dContext);
+        hr = SafeD3D11Create(&sd, levels, &swapChain, &d3dDevice, &obtainedLevel, &d3dContext, D3D_DRIVER_TYPE_HARDWARE);
+        Logger::logf("RENDER", "D3D11 HARDWARE hr=0x%X", (unsigned)hr);
     }
 
     if (FAILED(hr) || !swapChain || !d3dDevice || !d3dContext) {
         ReleasePartialD3D();
-        hr = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, levels, 2, D3D11_SDK_VERSION, &sd, &swapChain, &d3dDevice, &obtainedLevel, &d3dContext);
+        hr = SafeD3D11Create(&sd, levels, &swapChain, &d3dDevice, &obtainedLevel, &d3dContext, D3D_DRIVER_TYPE_WARP);
+        Logger::logf("RENDER", "D3D11 WARP hr=0x%X", (unsigned)hr);
     }
     if (FAILED(hr) || !swapChain || !d3dDevice || !d3dContext) {
         ReleasePartialD3D();
@@ -163,9 +192,14 @@ bool OverlayWindow::SetupD3D11(HWND hwnd) {
     if (FAILED(swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer))) || !backBuffer)
         return false;
     if (FAILED(d3dDevice->CreateRenderTargetView(backBuffer, nullptr, &renderTarget))) {
-        backBuffer->Release();
-        return false;
+    backBuffer->Release();
+    IDXGIDevice1* dxgi1 = nullptr;
+    if (SUCCEEDED(d3dDevice->QueryInterface(__uuidof(IDXGIDevice1), (void**)&dxgi1)) && dxgi1) {
+        dxgi1->SetMaximumFrameLatency(1);
+        dxgi1->Release();
     }
+    return true;
+}
     backBuffer->Release();
     IDXGIDevice1* dxgi1 = nullptr;
     if (SUCCEEDED(d3dDevice->QueryInterface(__uuidof(IDXGIDevice1), (void**)&dxgi1)) && dxgi1) {
@@ -198,25 +232,35 @@ void OverlayWindow::CleanupD3D11() {
 }
 
 bool OverlayWindow::Initialize() {
+    Logger::log("RENDER", "Initialize start");
     windowClass.cbSize = sizeof(WNDCLASSEXW);
-    windowClass.style = CS_HREDRAW | CS_VREDRAW;
+    windowClass.style = CS_CLASSDC;
     windowClass.lpfnWndProc = OverlayWndProc;
     windowClass.hInstance = GetModuleHandleW(nullptr);
     windowClass.lpszClassName = L"jatos";
-    if (!RegisterClassExW(&windowClass))
+    if (!RegisterClassExW(&windowClass)) {
+        Logger::log("RENDER", "RegisterClassExW failed");
         return false;
+    }
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
+    Logger::logf("RENDER", "screen %dx%d", screenW, screenH);
     windowHandle = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW, windowClass.lpszClassName, L"jatos", WS_POPUP, 0, 0, screenW, screenH, nullptr, nullptr, windowClass.hInstance, nullptr);
-    if (!windowHandle)
+    if (!windowHandle) {
+        Logger::log("RENDER", "CreateWindowExW failed");
         return false;
+    }
     SetLayeredWindowAttributes(windowHandle, RGB(0, 0, 0), 255, LWA_ALPHA);
     MARGINS margins = {-1, -1, -1, -1};
     DwmExtendFrameIntoClientArea(windowHandle, &margins);
     ShowWindow(windowHandle, SW_SHOW);
     UpdateWindow(windowHandle);
-    if (!SetupD3D11(windowHandle))
+    Logger::log("RENDER", "SetupD3D11...");
+    if (!SetupD3D11(windowHandle)) {
+        Logger::log("RENDER", "SetupD3D11 failed");
         return false;
+    }
+    Logger::log("RENDER", "SetupD3D11 OK");
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -425,6 +469,8 @@ void OverlayWindow::render(ImDrawList* drawList) {
         ImVec2 center = ImVec2(static_cast<float>(p.x), static_cast<float>(p.y));
         const ImU32 fc = imGuiCustom::ColorU32(variables::Aimbot::fovColor);
         const int seg = (int)std::clamp(variables::Aimbot::fovRadius * 0.4f, 24.0f, 64.0f);
+        if (variables::Aimbot::fillFov)
+            drawList->AddCircleFilled(center, variables::Aimbot::fovRadius, imGuiCustom::ColorU32(variables::Aimbot::fovFillColor), seg);
         drawList->AddCircle(center, variables::Aimbot::fovRadius, IM_COL32(0, 0, 0, 255), seg, 2.0f);
         drawList->AddCircle(center, variables::Aimbot::fovRadius, fc, seg, 1.0f);
     }
@@ -561,13 +607,14 @@ void OverlayWindow::EndFrame() {
     if (variables::Misc::vsync) {
         swapChain->Present(1, 0);
     } else {
-
         HRESULT pr = swapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING | DXGI_PRESENT_DO_NOT_WAIT);
         if (pr == DXGI_ERROR_INVALID_CALL)
             pr = swapChain->Present(0, DXGI_PRESENT_DO_NOT_WAIT);
         if (pr == DXGI_ERROR_INVALID_CALL)
             swapChain->Present(0, 0);
     }
+    if (variables::Misc::vsync)
+        DwmFlush();
 }
 
 void OverlayWindow::Cleanup() {

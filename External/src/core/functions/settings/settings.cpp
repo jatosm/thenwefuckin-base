@@ -52,12 +52,24 @@ void RenderAimMenu() {
     ay += imGuiCustom::CheckStep();
     imGuiCustom::SliderFloat("fov_radius", &variables::Aimbot::fovRadius, 10.0f, 500.0f, ImVec2(12.0f, ay + imGuiCustom::SliderTop()), 272.0f, "FOV Radius", "%.0f");
     ay += imGuiCustom::SliderTop() + 15.0f;
+    if (variables::Aimbot::showFOV) {
+        imGuiCustom::Checkbox("Fill FOV", &variables::Aimbot::fillFov, ImVec2(12.0f, ay));
+        imGuiCustom::ColorSquare("fov_fill_color", &variables::Aimbot::fovFillColor, ImVec2(264.0f, ay + 1.0f));
+        ay += imGuiCustom::CheckStep();
+    }
+    imGuiCustom::Checkbox("360 Mode", &variables::Aimbot::mode360, ImVec2(12.0f, ay));
+    imGuiCustom::Keybind("mode360_key", &variables::Aimbot::mode360Key, ImVec2(222.0f, ay - 1.0f), ImVec2(68.0f, 13.0f), &variables::Aimbot::mode360KeyMode);
+    ay += imGuiCustom::CheckStep();
     imGuiCustom::SliderFloat("smoothing", &variables::Aimbot::smoothing, 1.0f, 20.0f, ImVec2(12.0f, ay + imGuiCustom::SliderTop()), 272.0f, "Smoothing", "%.1f");
     ay += imGuiCustom::SliderTop() + 15.0f;
     const char* targets[] = {"Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg", "HumanoidRootPart", "Closest"};
     ay += imGuiCustom::ComboTop();
     imGuiCustom::Combo("aim_target", &variables::Aimbot::aimTarget, targets, 8, ImVec2(12.0f, ay), 158.0f, "Aim Target:");
     ay += imGuiCustom::ComboStep();
+    imGuiCustom::Checkbox("Auto Switch Target", &variables::Aimbot::autoSwitch, ImVec2(12.0f, ay));
+    ay += imGuiCustom::CheckStep();
+    imGuiCustom::Checkbox("Sticky Aim", &variables::Aimbot::stickyAim, ImVec2(12.0f, ay));
+    ay += imGuiCustom::CheckStep();
     const char* methods[] = {"Memory", "Viewport", "Raycast", "PF Silent"};
     imGuiCustom::Combo("aim_method", &variables::Aimbot::aimMethod, methods, 4, ImVec2(12.0f, ay + imGuiCustom::ComboTop()), 158.0f, "Aim Method:");
     ay += imGuiCustom::ComboTop() + 22.0f;
@@ -100,6 +112,14 @@ void RenderAimMenu() {
             ay += imGuiCustom::SliderTop() + 15.0f;
         }
     }
+    imGuiCustom::Checkbox("Global Prediction", &variables::Aimbot::globalPrediction, ImVec2(12.0f, ay));
+    ay += imGuiCustom::CheckStep();
+    if (variables::Aimbot::globalPrediction) {
+        imGuiCustom::SliderFloat("pred_x", &variables::Aimbot::predX, 0.0f, 10.0f, ImVec2(12.0f, ay + imGuiCustom::SliderTop()), 272.0f, "Pred X", "%.1f");
+        ay += imGuiCustom::SliderTop() + 15.0f;
+        imGuiCustom::SliderFloat("pred_y", &variables::Aimbot::predY, 0.0f, 10.0f, ImVec2(12.0f, ay + imGuiCustom::SliderTop()), 272.0f, "Pred Y", "%.1f");
+        ay += imGuiCustom::SliderTop() + 15.0f;
+    }
     imGuiCustom::Checkbox("Include NPC", &variables::Aimbot::includeNPC, ImVec2(12.0f, ay));
     ay += imGuiCustom::CheckStep();
     imGuiCustom::Checkbox("Silent Tracer", &variables::Aimbot::silentTracer, ImVec2(12.0f, ay));
@@ -124,6 +144,18 @@ void RenderAimMenu() {
     float by = 46.0f - aimScrollR;
     imGuiCustom::Checkbox("Visible Check", &variables::Aimbot::visibleCheck, ImVec2(311.0f, by));
     by += imGuiCustom::CheckStep();
+    imGuiCustom::Checkbox("Knock Check", &variables::Aimbot::knockCheck, ImVec2(311.0f, by));
+    by += imGuiCustom::CheckStep();
+    imGuiCustom::Checkbox("Forcefield Check", &variables::Aimbot::forcefieldCheck, ImVec2(311.0f, by));
+    by += imGuiCustom::CheckStep();
+    imGuiCustom::Checkbox("Spectate Check", &variables::Aimbot::spectateCheck, ImVec2(311.0f, by));
+    by += imGuiCustom::CheckStep();
+    imGuiCustom::Checkbox("Min Health Check", &variables::Aimbot::healthCheck, ImVec2(311.0f, by));
+    by += imGuiCustom::CheckStep();
+    if (variables::Aimbot::healthCheck) {
+        imGuiCustom::SliderFloat("min_health", &variables::Aimbot::minHealth, 0.0f, 100.0f, ImVec2(311.0f, by + imGuiCustom::SliderTop()), 272.0f, "Min Health", "%.0f");
+        by += imGuiCustom::SliderTop() + 15.0f;
+    }
     imGuiCustom::Checkbox("Spread Modifier", &variables::Aimbot::useSpread, ImVec2(311.0f, by));
     by += imGuiCustom::CheckStep();
     if (variables::Aimbot::useSpread) {

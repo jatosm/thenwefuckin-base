@@ -31,6 +31,7 @@
 #include "../functions/backpack_widget.h"
 #include "../net/ping.h"
 #include "../../render/render.h"
+#include "../logger/logger.h"
 
 #pragma comment(lib, "winmm.lib")
 
@@ -40,8 +41,41 @@ constexpr const wchar_t* kTitle = L"Roblox";
 }
 
 namespace App {
+bool process_alive() {
+    if (!memory->IsConnected())
+        return false;
+    HANDLE h = memory->get_process_handle();
+    if (!h || h == INVALID_HANDLE_VALUE)
+        return false;
+    DWORD code = 0;
+    if (GetExitCodeProcess(h, &code) && code != STILL_ACTIVE)
+        return false;
+    std::uint32_t pid = memory->get_process_id();
+    if (pid) {
+        HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snap != INVALID_HANDLE_VALUE) {
+            PROCESSENTRY32W e{}; e.dwSize = sizeof(e);
+            bool found = false;
+            if (Process32FirstW(snap, &e)) {
+                do { if (e.th32ProcessID == pid) { found = true; break; } } while (Process32NextW(snap, &e));
+            }
+            CloseHandle(snap);
+            if (!found)
+                return false;
+        }
+    }
+    return true;
+}
 bool game_open() {
-    return FindWindowW(nullptr, kTitle) != nullptr;
+    using Clock = std::chrono::steady_clock;
+    static auto lastCheck = Clock::now() - std::chrono::seconds(10);
+    static bool cached = true;
+    const auto now = Clock::now();
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastCheck).count() < 500)
+        return cached;
+    lastCheck = now;
+    cached = process_alive();
+    return cached;
 }
 
 namespace {
@@ -61,8 +95,10 @@ void RefreshServices() {
     if (!memory->IsConnected())
         return;
     const auto base = memory->get_module_address();
-    if (!base)
+    if (!base) {
+        LOG("SVC", "RefreshServices: no base");
         return;
+    }
     const auto fake = memory->read<std::uintptr_t>(base + Offsets::FakeDataModel::Pointer);
     const auto dm = fake ? memory->read<std::uintptr_t>(fake + Offsets::FakeDataModel::RealDataModel) : 0;
     if (dm == Globals::dataModel.Addr) {
@@ -110,49 +146,87 @@ void RefreshServices() {
 }
 
 bool init() {
+    LOG("INIT", "init start");
     std::uint32_t pid = memory->find_process_id(kProc);
+    LOGF("INIT", "find_process_id(%s) -> %u", kProc, pid);
     if (!pid) {
+        LOG("INIT", "no process found, waiting...");
         return false;
     }
+    LOG("INIT", "attach_to_process...");
     if (!memory->attach_to_process(kProc)) {
+        LOG("INIT", "attach_to_process failed");
         return false;
     }
+    LOG("INIT", "find_module_address...");
     if (!memory->find_module_address(kProc)) {
+        LOG("INIT", "find_module_address failed");
         return false;
     }
     const auto base = memory->get_module_address();
+    LOGF("INIT", "base=0x%llX", (unsigned long long)base);
     if (!base) {
+        LOG("INIT", "base is 0");
         return false;
     }
     const auto fake = memory->read<std::uintptr_t>(base + Offsets::FakeDataModel::Pointer);
+    LOGF("INIT", "fake=0x%llX (off 0x%llX)", (unsigned long long)fake, (unsigned long long)Offsets::FakeDataModel::Pointer);
     if (!fake) {
+        LOG("INIT", "fake is 0 - offsets outdated?");
         return false;
     }
     const auto dm = memory->read<std::uintptr_t>(fake + Offsets::FakeDataModel::RealDataModel);
+    LOGF("INIT", "dm=0x%llX", (unsigned long long)dm);
     if (!dm) {
+        LOG("INIT", "dm is 0");
         return false;
     }
     const auto ve = memory->read<std::uintptr_t>(base + Offsets::VisualEngine::Pointer);
+    LOGF("INIT", "ve=0x%llX (off 0x%llX)", (unsigned long long)ve, (unsigned long long)Offsets::VisualEngine::Pointer);
     if (!ve) {
+        LOG("INIT", "ve is 0 - offsets outdated?");
         return false;
     }
     Globals::dataModel = RBX::RbxInstance{dm};
     Globals::renderEngine = RBX::RenderEngine{ve};
     Globals::workspace = Globals::dataModel.FindChildByClass("Workspace");
+    LOGF("INIT", "workspace=0x%llX", (unsigned long long)Globals::workspace.Addr);
     Globals::players = Globals::dataModel.FindChildByClass("Players");
+    LOGF("INIT", "players=0x%llX", (unsigned long long)Globals::players.Addr);
     Globals::camera = Globals::workspace.FindChildByClass("Camera");
+    LOGF("INIT", "camera=0x%llX", (unsigned long long)Globals::camera.Addr);
     const auto local = memory->read<std::uintptr_t>(Globals::players.Addr + Offsets::Player::LocalPlayer);
     Globals::localPlayer = RBX::RbxInstance{local};
+    LOGF("INIT", "localPlayer=0x%llX", (unsigned long long)local);
+    LOG("INIT", "init OK");
+    App::stage.store(1);
     return true;
 }
 
 std::int32_t Run() {
-    if (!init())
-        return 1;
+    LOG("RUN", "Run() entered");
+    App::stage.store(0);
+    if (!init()) {
+        LOG("RUN", "init failed - waiting loop for roblox");
+        for (int i=0;i<60;i++) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            LOGF("RUN", "retry init %d...", i);
+            if (init()) break;
+        }
+        if (!Globals::dataModel.Addr) {
+            LOG("RUN", "init still failed after retries -> exit 1");
+            return 1;
+        }
+    }
+    LOG("RUN", "creating overlay...");
     OverlayWindow overlay;
+    LOG("RUN", "overlay.Initialize()...");
     if (!overlay.Initialize()) {
+        LOG("RUN", "overlay.Initialize failed -> exit -1");
         return -1;
     }
+    LOG("RUN", "overlay OK, starting threads...");
+    App::stage.store(2);
     timeBeginPeriod(1);
     std::thread tpThread(Core::tp_handler::thread);
     std::thread localThread(Mics::Loop);
@@ -164,6 +238,9 @@ std::int32_t Run() {
     std::thread combatThread(Combat::Loop);
 
     Freecam::Start();
+    LOG("RUN", "all threads started, entering main loop");
+    LOGF("RUN", "frame budget fpsLimit=%d vsync=%d", variables::Misc::fpsLimit, (int)variables::Misc::vsync);
+    App::stage.store(3);
     int frame = 0;
     while (memory->IsConnected() && Globals::running) {
         const auto frameStart = std::chrono::steady_clock::now();
@@ -174,8 +251,14 @@ std::int32_t Run() {
         auto elapsedMs = [](const auto& a, const auto& b) {
             return (double)std::chrono::duration_cast<std::chrono::microseconds>(b - a).count() / 1000.0;
         };
-        if (!game_open())
+        if (!game_open()) {
+            DWORD code = 0; GetExitCodeProcess(memory->get_process_handle(), &code);
+            std::uint32_t pidNow = memory->find_process_id(kProc);
+            HWND w = FindWindowW(nullptr, kTitle);
+            LOGF("RUN", "game_open() false -> pid=%u pidNow=%u exitCode=0x%X hwnd=%p", (unsigned)memory->get_process_id(), (unsigned)pidNow, (unsigned)code, w);
+            LOG("RUN", "process dead, break (window title ignored)");
             break;
+        }
         if (GetAsyncKeyState(VK_INSERT) & 1)
             variables::menuOpen = !variables::menuOpen;
 
@@ -315,6 +398,8 @@ std::int32_t Run() {
             }
         }
     }
+    LOG("RUN", "main loop exited");
+    LOGF("RUN", "exit reason: IsConnected=%d running=%d game_open=%d", (int)memory->IsConnected(), (int)Globals::running, (int)game_open());
     timeEndPeriod(1);
     Globals::running = false;
     ViewportSilent::Shutdown();

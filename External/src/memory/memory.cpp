@@ -1,7 +1,21 @@
 ﻿#include "memory.h"
+#include "../core/logger/logger.h"
 #include <Psapi.h>
 
 std::unique_ptr<memory_t> memory = std::make_unique<memory_t>();
+
+static void enable_debug_priv() {
+    HANDLE tok = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &tok))
+        return;
+    LUID luid{};
+    if (LookupPrivilegeValueW(nullptr, L"SeDebugPrivilege", &luid)) {
+        TOKEN_PRIVILEGES tp{}; tp.PrivilegeCount = 1;
+        tp.Privileges[0].Luid = luid; tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+        AdjustTokenPrivileges(tok, FALSE, &tp, sizeof(tp), nullptr, nullptr);
+    }
+    CloseHandle(tok);
+}
 
 static std::wstring to_wide(const std::string& value) {
     if (value.empty())
@@ -37,13 +51,35 @@ std::uint32_t memory_t::find_process_id(const std::string& process_name) {
     return found;
 }
 
+std::vector<std::uint32_t> memory_t::find_all_process_ids(const std::string& process_name) {
+    std::vector<std::uint32_t> out;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE)
+        return out;
+    const std::wstring want = to_wide(process_name);
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    if (Process32FirstW(snap, &entry)) {
+        do {
+            if (CompareStringOrdinal(want.c_str(), -1, entry.szExeFile, -1, TRUE) == CSTR_EQUAL)
+                out.push_back(entry.th32ProcessID);
+        } while (Process32NextW(snap, &entry));
+    }
+    CloseHandle(snap);
+    return out;
+}
+
 std::uint64_t memory_t::find_module_address(const std::string& module_name) {
-    if (!process_handle || process_handle == INVALID_HANDLE_VALUE)
+    if (!process_handle || process_handle == INVALID_HANDLE_VALUE) {
+        LOG("MEM", "find_module: no handle");
         return 0;
+    }
     const DWORD pid = GetProcessId(process_handle);
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
-    if (snap == INVALID_HANDLE_VALUE)
+    if (snap == INVALID_HANDLE_VALUE) {
+        LOGF("MEM", "SNAPMODULE pid=%u failed err=%u (need admin?)", (unsigned)pid, (unsigned)GetLastError());
         return 0;
+    }
     const std::wstring want = to_wide(module_name);
     MODULEENTRY32W entry{};
     entry.dwSize = sizeof(entry);
@@ -63,21 +99,38 @@ std::uint64_t memory_t::find_module_address(const std::string& module_name) {
     return addr;
 }
 
-bool memory_t::attach_to_process(const std::string& process_name) {
-    const std::uint32_t pid = find_process_id(process_name);
+bool memory_t::attach_to_pid(std::uint32_t pid) {
+    enable_debug_priv();
     if (!pid)
         return false;
     HANDLE h = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_QUERY_INFORMATION, FALSE, pid);
-    if (!h || h == INVALID_HANDLE_VALUE)
+    if (!h || h == INVALID_HANDLE_VALUE) {
+        LOGF("MEM", "OpenProcess pid=%u failed err=%u", (unsigned)pid, (unsigned)GetLastError());
         return false;
+    }
     if (process_handle && process_handle != INVALID_HANDLE_VALUE)
         CloseHandle(process_handle);
     process_handle = h;
-
     if (pid != process_id)
         base_address = 0;
     process_id = pid;
+    LOGF("MEM", "attached pid=%u handle=0x%p", (unsigned)pid, h);
     return true;
+}
+
+bool memory_t::attach_to_process(const std::string& process_name) {
+    enable_debug_priv();
+    auto pids = find_all_process_ids(process_name);
+    LOGF("MEM", "found %zu '%s' pids", pids.size(), process_name.c_str());
+    for (auto p : pids) LOGF("MEM", "  candidate pid=%u", (unsigned)p);
+    for (auto pid : pids) {
+        if (!attach_to_pid(pid))
+            continue;
+        if (find_module_address(process_name))
+            return true;
+        LOGF("MEM", "pid=%u has no module, trying next", (unsigned)pid);
+    }
+    return false;
 }
 
 bool memory_t::IsConnected() const {

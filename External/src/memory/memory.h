@@ -15,8 +15,10 @@ public:
     memory_t& operator=(const memory_t&) = delete;
 
     std::uint32_t find_process_id(const std::string& process_name);
+    std::vector<std::uint32_t> find_all_process_ids(const std::string& process_name);
     std::uint64_t find_module_address(const std::string& module_name);
     bool attach_to_process(const std::string& process_name);
+    bool attach_to_pid(std::uint32_t pid);
 
     std::string read_string(std::uint64_t address);
     bool IsConnected() const;

@@ -135,6 +135,47 @@ float GetDistance2D(const RBX::Vec2& a, const RBX::Vec2& b) {
     return sqrtf(dx * dx + dy * dy);
 }
 
+bool IsForceFielded(std::uintptr_t characterAddr) {
+    if (!characterAddr || !variables::Aimbot::forcefieldCheck)
+        return false;
+    RBX::RbxInstance ch{characterAddr};
+    return ch.FindChildByClass("ForceField").Addr != 0;
+}
+
+bool PassesKnockHealth(const PlayerCache::CachedPlayer& p) {
+    if (variables::Aimbot::knockCheck && p.maxHealth > 0.0f && p.health <= 0.0f)
+        return false;
+    if (variables::Aimbot::healthCheck && p.health < variables::Aimbot::minHealth)
+        return false;
+    return true;
+}
+
+bool Is360Active() {
+    if (variables::Aimbot::mode360)
+        return true;
+    if (variables::Aimbot::mode360Key != 0)
+        return (GetAsyncKeyState(variables::Aimbot::mode360Key) & 0x8000) != 0;
+    return false;
+}
+
+float EffectiveFov(float base) {
+    return Is360Active() ? 1e9f : base;
+}
+
+void ApplyGlobalPrediction(RBX::Vec3& world, std::uintptr_t rootPartAddr) {
+    if (!variables::Aimbot::globalPrediction || !rootPartAddr)
+        return;
+    const std::uintptr_t prim = memory->read<std::uintptr_t>(rootPartAddr + Offsets::BasePart::Primitive);
+    if (!prim)
+        return;
+    const RBX::Vec3 vel = memory->read<RBX::Vec3>(prim + Offsets::Primitive::AssemblyLinearVelocity);
+    const float fx = (10.0f - variables::Aimbot::predX) * 0.1f;
+    const float fy = (10.0f - variables::Aimbot::predY) * 0.1f;
+    world.X += vel.X * fx;
+    world.Y += vel.Y * fy;
+    world.Z += vel.Z * fx;
+}
+
 bool IsAimKeyDown(int vk) {
     if (vk <= 0)
         return false;
@@ -177,8 +218,7 @@ bool AimKeyActive(int key, int mode, bool& tog, bool& was) {
     return down;
 }
 
-bool IsTargetVisible(const RBX::Vec3& worldPos) {
-    if (!variables::Aimbot::visibleCheck)
+bool IsTargetVisible(const RBX::Vec3& worldPos) {    if (!variables::Aimbot::visibleCheck)
         return true;
     if (!Globals::camera.Addr)
         return true;
@@ -645,12 +685,16 @@ void RunAimbot(const RBX::Mat4& view) {
             if (!stillValid)
                 lockedPlayerAddr = 0;
         }
-        float best = variables::Aimbot::fovRadius;
+        float best = EffectiveFov(variables::Aimbot::fovRadius);
         RBX::Vec2 bestS{};
         RBX::Vec3 bestW{};
         std::uintptr_t bestAddr = 0;
         for (auto& p : PfCache::players) {
             if (!p.isValid)
+                continue;
+            if (variables::Aimbot::knockCheck && p.health <= 0.0f)
+                continue;
+            if (variables::Aimbot::healthCheck && p.health < variables::Aimbot::minHealth)
                 continue;
             if (PlayersTab::IsFriend(p.name))
                 continue;
@@ -704,16 +748,21 @@ void RunAimbot(const RBX::Mat4& view) {
     }
     PfSilent::SetActive(false, {});
 
-    if (lockedPlayerAddr == 0) {
+    if (lockedPlayerAddr == 0 || variables::Aimbot::autoSwitch || !variables::Aimbot::stickyAim) {
         if (!doAcqScan) {
             hasTarget = false;
             return;
         }
         lastAcqScan = nowAim;
-        float best = variables::Aimbot::fovRadius;
+        if (variables::Aimbot::autoSwitch) lockedPlayerAddr = 0;
+        float best = EffectiveFov(variables::Aimbot::fovRadius);
         std::uintptr_t bestAddr = 0;
         auto consider = [&](PlayerCache::CachedPlayer& p) {
             if (!p.isValid || (p.maxHealth > 0.0f && p.health <= 0.0f))
+                return;
+            if (!PassesKnockHealth(p))
+                return;
+            if (IsForceFielded(p.characterAddr))
                 return;
             if (PlayersTab::IsFriend(p.name))
                 return;
@@ -808,6 +857,16 @@ void RunAimbot(const RBX::Mat4& view) {
     auto trackOne = [&](PlayerCache::CachedPlayer& p) -> bool {
         if (!p.isValid || p.playerAddr != lockedPlayerAddr || (p.maxHealth > 0.0f && p.health <= 0.0f))
             return false;
+        if (!PassesKnockHealth(p)) {
+            lockedPlayerAddr = 0;
+            hasTarget = false;
+            return false;
+        }
+        if (IsForceFielded(p.characterAddr)) {
+            lockedPlayerAddr = 0;
+            hasTarget = false;
+            return false;
+        }
         if (PlayersTab::IsFriend(p.name)) {
             lockedPlayerAddr = 0;
             hasTarget = false;
@@ -869,6 +928,12 @@ void RunAimbot(const RBX::Mat4& view) {
                         dst = proj;
                 }
             }
+        }
+        if (variables::Aimbot::globalPrediction) {
+            ApplyGlobalPrediction(dstWorld, p.rootPartAddr);
+            const RBX::Vec2 proj = W2S::WorldToScreen(dstWorld, view);
+            if (proj.X != 0 || proj.Y != 0)
+                dst = proj;
         }
         found = true;
         return true;
