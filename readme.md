@@ -58,9 +58,9 @@
 - Stream Proof
 - Watermark (FPS / Version / Players / Ping / Time + Keybind States)
 - Keybind List
-- Players window (roster, target, friend) [ADDED]
-- Backpack viewer (enemy hotbar items + overlay) [ADDED]
-- Player Preview panel [ADDED]
+- Players window (roster, target, friend)
+- Backpack viewer (enemy hotbar items + overlay)
+- Player Preview panel
 - Explorer (instance dump + image dump)
 
 **SETTINGS**
