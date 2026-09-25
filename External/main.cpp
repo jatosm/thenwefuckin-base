@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #include <atomic>
 #include <cstdint>
 #include <iostream>
@@ -12,6 +13,7 @@
 #include "src/sdk/offsets.h"
 
 namespace {
+volatile const char g_CreditSignature[] = "discord.gg/thenwefuckin - jatos base";
 constexpr WORD C_WHITE  = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY;
 constexpr WORD C_DIM    = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
 constexpr WORD C_GREEN  = FOREGROUND_GREEN | FOREGROUND_INTENSITY;
@@ -102,10 +104,11 @@ std::int32_t main() {
     });
     Logger::quiet = true;
     Logger::init();
-    SetConsoleTitleA("jatos");
+    SetConsoleTitleA("jatos | discord.gg/thenwefuckin");
 
     std::cout << "\n";
     badge("jatos", C_CYAN, "external - INSERT to open menu");
+    badge("discord", C_WHITE, "discord.gg/thenwefuckin");
     std::cout << "\n";
     if (!is_admin()) {
         badge("priv", C_YELLOW, "administrator required - relaunching elevated...");

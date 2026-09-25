@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #include <cstdint>
 #include <string>
 #include "math.h"

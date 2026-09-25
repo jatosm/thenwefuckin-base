@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #include "app.h"
 #include <iostream>
 #include <windows.h>
@@ -10,6 +11,7 @@
 #include "../cache/cache.h"
 #include "../cache/pf_cache.h"
 #include "../cache/cb_cache.h"
+#include "../cache/ml_cache.h"
 #include "../cache/ops_cache.h"
 #include "../globals/globals.h"
 #include "../tp_handler/tp_handler.h"
@@ -121,6 +123,8 @@ void RefreshServices() {
         PfCache::workspacePlayersAddr = 0;
         CbCache::players.clear();
         CbCache::charactersAddr = 0;
+        MlCache::players.clear();
+        MlCache::charactersAddr = 0;
         OpsCache::players.clear();
         OpsCache::viewmodelsAddr = 0;
         ResetAimState();
@@ -140,6 +144,8 @@ void RefreshServices() {
     PfCache::workspacePlayersAddr = 0;
     CbCache::players.clear();
     CbCache::charactersAddr = 0;
+    MlCache::players.clear();
+    MlCache::charactersAddr = 0;
     OpsCache::players.clear();
     OpsCache::viewmodelsAddr = 0;
     ResetAimState();
@@ -321,9 +327,10 @@ std::int32_t Run() {
             CbCache::update();
             PfCache::update();
             OpsCache::update();
+            MlCache::update();
             if ((frame % 3 == 0) && std::chrono::duration_cast<std::chrono::milliseconds>(nowP - lastPlrUpd).count() >= 4) {
                 lastPlrUpd = nowP;
-                if (!CbCache::charactersAddr && !OpsCache::viewmodelsAddr) {
+                if (!CbCache::charactersAddr && !OpsCache::viewmodelsAddr && !MlCache::charactersAddr) {
                     PlayerCache::updateplayers();
                 } else {
                     PlayerCache::players.clear();

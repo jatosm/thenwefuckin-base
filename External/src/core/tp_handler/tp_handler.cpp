@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #include "tp_handler.h"
 #include <chrono>
 #include <thread>

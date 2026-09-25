@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #include "MeshCache.h"
 #include "sdk/MeshBridge.h"
 #include "core/globals/globals.h"

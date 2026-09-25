@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #include "worldgeo.h"
 
 #include "core/globals/globals.h"

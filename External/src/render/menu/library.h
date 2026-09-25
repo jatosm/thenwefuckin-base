@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #pragma once
 
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
@@ -439,6 +440,8 @@ inline const char* KeyName(int key)
     case 0x01: return "Left Mouse";
     case 0x02: return "Right Mouse";
     case 0x04: return "Middle Mouse";
+    case 0x05: return "Mouse X1";
+    case 0x06: return "Mouse X2";
     case 0x10: return "Shift";
     case 0x11: return "Ctrl";
     case 0x12: return "Alt";
@@ -522,7 +525,7 @@ inline bool Keybind(const char* label, int* key, const ImVec2& pos, const ImVec2
             {
                 if (ImGui::IsMouseClicked(i))
                 {
-                    *key = i == 0 ? 0x01 : i == 1 ? 0x02 : 0x04;
+                    *key = i == 0 ? 0x01 : i == 1 ? 0x02 : i == 2 ? 0x04 : i == 3 ? 0x05 : 0x06;
                     waiting_id = 0;
                     ImGui::ClearActiveID();
                     break;
@@ -1017,27 +1020,49 @@ inline bool MultiCombo(const char* label, bool values[], const char* const items
     bool changed = false;
     const float row_height = 17.0f;
     const float popup_padding = 3.0f;
-    const float full_height = popup_padding * 2.0f + row_height * items_count;
-    const float visible_height = full_height * open_anim;
+    constexpr int kMaxRows = 10;
+    const int shown_rows = items_count < kMaxRows ? items_count : kMaxRows;
+    const float list_h = row_height * (float)items_count;
+    const float box_list_h = row_height * (float)shown_rows;
+    const float box_h = popup_padding * 2.0f + box_list_h;
+    const float visible_height = box_h * open_anim;
     const ImVec2 popup_min(min.x, min.y + size.y + 2.0f);
     const ImVec2 popup_max(popup_min.x + width, popup_min.y + visible_height);
-    const ImRect total_rect(min, ImVec2(min.x + width, popup_min.y + full_height));
+    const ImVec2 box_max(popup_min.x + width, popup_min.y + box_h);
+    const ImRect total_rect(min, ImVec2(min.x + width, popup_min.y + box_h));
 
-    if (open && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !total_rect.Contains(ImGui::GetIO().MousePos))
+    static std::unordered_map<ImGuiID, float> s_multiScroll;
+    float& mscroll = s_multiScroll[id];
+    const float maxScroll = list_h > box_list_h ? (list_h - box_list_h) : 0.0f;
+    if (mscroll < 0.0f)
+        mscroll = 0.0f;
+    if (mscroll > maxScroll)
+        mscroll = maxScroll;
+    if (open && ImGui::GetIO().MouseWheel != 0.0f &&
+        ImRect(popup_min, box_max).Contains(ImGui::GetIO().MousePos)) {
+        mscroll -= ImGui::GetIO().MouseWheel * 22.0f;
+        if (mscroll < 0.0f)
+            mscroll = 0.0f;
+        if (mscroll > maxScroll)
+            mscroll = maxScroll;
+    }
+
+    if (open && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !total_rect.Contains(ImGui::GetIO().MousePos)) {
         open_id = 0;
+        ComboClosedFrame() = ImGui::GetFrameCount();
+    }
 
     if (open_anim > 0.01f)
     {
         ImDrawList* overlay = ImGui::GetForegroundDrawList();
         overlay->PushClipRect(popup_min, popup_max, true);
-        const ImVec2 popup_box_max = ImVec2(popup_min.x + width, popup_min.y + full_height);
-        overlay->AddRectFilled(popup_min, popup_box_max, ColorU32(theme.ControlBg, open_anim), 0.0f);
-        overlay->AddRect(popup_min, popup_box_max, ImGui::GetColorU32(IM_COL32(0, 0, 0, (int)(255 * open_anim))), 0.0f, 0, 1.0f);
-        overlay->AddRect(popup_min + ImVec2(1.0f, 1.0f), popup_box_max - ImVec2(1.0f, 1.0f), ImGui::GetColorU32(IM_COL32(52, 52, 56, (int)(255 * open_anim))), 0.0f, 0, 1.0f);
+        overlay->AddRectFilled(popup_min, box_max, ColorU32(theme.ControlBg, open_anim), 0.0f);
+        overlay->AddRect(popup_min, box_max, ImGui::GetColorU32(IM_COL32(0, 0, 0, (int)(255 * open_anim))), 0.0f, 0, 1.0f);
+        overlay->AddRect(popup_min + ImVec2(1.0f, 1.0f), box_max - ImVec2(1.0f, 1.0f), ImGui::GetColorU32(IM_COL32(52, 52, 56, (int)(255 * open_anim))), 0.0f, 0, 1.0f);
 
         for (int i = 0; i < items_count; ++i)
         {
-            const ImVec2 item_min(popup_min.x + 2.0f, popup_min.y + popup_padding + row_height * i);
+            const ImVec2 item_min(popup_min.x + 2.0f, popup_min.y + popup_padding + row_height * i - mscroll);
             const ImVec2 item_max(popup_min.x + width - 2.0f, item_min.y + row_height);
             const ImRect item_rect(item_min, item_max);
             const bool item_hovered = item_rect.Contains(ImGui::GetIO().MousePos);
@@ -1046,7 +1071,7 @@ inline bool MultiCombo(const char* label, bool values[], const char* const items
             const ImGuiID item_id = ImGui::GetID("multicombo_item");
             const float item_hover = AnimateFloat(item_id, item_hovered, 18.0f);
             const float item_selected = AnimateFloat(item_id + 1, values[i], 18.0f);
-            const float item_appear = ImClamp((open_anim - i * 0.08f) / 0.45f, 0.0f, 1.0f);
+            const float item_appear = (items_count > 12) ? open_anim : ImClamp((open_anim - i * 0.08f) / 0.45f, 0.0f, 1.0f);
             const ImVec4 row_color = LerpColor(theme.ControlBg, theme.ControlInactive, item_hover * 0.8f + item_selected * 0.4f);
             if (item_hover > 0.01f || item_selected > 0.01f)
                 overlay->AddRectFilled(item_min, item_max, ColorU32(row_color, open_anim), 0.0f);
@@ -1060,6 +1085,12 @@ inline bool MultiCombo(const char* label, bool values[], const char* const items
             ImGui::PopID();
         }
         overlay->PopClipRect();
+    }
+    if (open_id == id)
+        ComboOpenId() = id;
+    else if (ComboOpenId() == id) {
+        ComboOpenId() = 0;
+        ComboClosedFrame() = ImGui::GetFrameCount();
     }
     ImGui::PopID();
     return changed;

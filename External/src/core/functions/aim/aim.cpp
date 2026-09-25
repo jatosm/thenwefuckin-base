@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
 #define IMGUI_DEFINE_MATH_OPERATORS
 #endif
@@ -11,6 +12,7 @@
 #include "../../cache/worldcache.h"
 #include "../../cache/pf_cache.h"
 #include "../../cache/cb_cache.h"
+#include "../../cache/ml_cache.h"
 #include "../../cache/ops_cache.h"
 #include "../players/players.h"
 #include <mutex>
@@ -107,6 +109,29 @@ RBX::Vec3 ApplyRaycastSpread(const RBX::Vec3& origin, const RBX::Vec3& target, f
         target.Y + right.Y * offsetX + up.Y * offsetY,
         target.Z + right.Z * offsetX + up.Z * offsetY
     };
+}
+
+void ApplyMouseAim(const RBX::Vec2& dst) {
+    POINT mp{};
+    GetCursorPos(&mp);
+    const float dx = dst.X - static_cast<float>(mp.x);
+    const float dy = dst.Y - static_cast<float>(mp.y);
+    if (dx == 0.0f && dy == 0.0f)
+        return;
+    const float s = variables::Aimbot::smoothing < 1.0f ? 1.0f : variables::Aimbot::smoothing;
+    Aimbot::MoveMouse(dx / s, dy / s);
+}
+
+void FireMagicTarget(const RBX::Vec3& camPos, const RBX::Vec3& dstWorld) {
+    MagicBullet::Ensure(true);
+    RBX::Vec3 finalTarget = dstWorld;
+    if (variables::Aimbot::useSpread && variables::Aimbot::spreadModifier > 0.001f) {
+        static std::mt19937 hitRng(42);
+        std::uniform_real_distribution<float> pct(0.0f, 100.0f);
+        if (pct(hitRng) > variables::Aimbot::hitChance)
+            finalTarget = ApplyRaycastSpread(camPos, dstWorld, variables::Aimbot::spreadModifier);
+    }
+    MagicBullet::SetActive(true, finalTarget);
 }
 }
 
@@ -459,17 +484,28 @@ bool BestPartScreen(const PlayerCache::CachedPlayer& plr, const RBX::Mat4& view,
 }
 
 void RenderTracer(ImDrawList* dl) {
-    if (!variables::Aimbot::silentTracer || !hasTarget)
+    if (!variables::Aimbot::silentTracer)
         return;
+    static RBX::Vec2 shown{0.0f, 0.0f};
+    static auto shownAt = std::chrono::steady_clock::now() - std::chrono::seconds(10);
+    const auto now = std::chrono::steady_clock::now();
+    if (hasTarget) {
+        shown = lastTarget;
+        shownAt = now;
+    } else if (std::chrono::duration_cast<std::chrono::milliseconds>(now - shownAt).count() > 80) {
+        return;
+    }
     POINT mp{};
     GetCursorPos(&mp);
     const ImVec2 from(static_cast<float>(mp.x), static_cast<float>(mp.y));
-    ImVec2 to(lastTarget.X, lastTarget.Y);
+    ImVec2 to(shown.X, shown.Y);
     const float dx = to.x - from.x;
     const float dy = to.y - from.y;
     const float dist = sqrtf(dx * dx + dy * dy);
-    if (dist > variables::Aimbot::fovRadius)
-        return;
+    if (dist > variables::Aimbot::fovRadius && dist > 0.001f) {
+        const float t = variables::Aimbot::fovRadius / dist;
+        to = ImVec2(from.x + dx * t, from.y + dy * t);
+    }
     const ImU32 col = IM_COL32((int)(variables::Aimbot::silentTracerColor.x * 255.0f), (int)(variables::Aimbot::silentTracerColor.y * 255.0f), (int)(variables::Aimbot::silentTracerColor.z * 255.0f), (int)(variables::Aimbot::silentTracerColor.w * 255.0f));
     dl->AddLine(from, to, IM_COL32(0, 0, 0, 255), variables::Aimbot::silentTracerThickness + 2.0f);
     dl->AddLine(from, to, col, variables::Aimbot::silentTracerThickness);
@@ -477,12 +513,21 @@ void RenderTracer(ImDrawList* dl) {
 }
 
 void RenderPredictionLine(ImDrawList* dl) {
-    if (!variables::Aimbot::predictionLine || !hasTarget || !variables::Aimbot::prediction)
+    if (!variables::Aimbot::predictionLine || !variables::Aimbot::prediction)
         return;
+    static RBX::Vec2 shown{0.0f, 0.0f};
+    static auto shownAt = std::chrono::steady_clock::now() - std::chrono::seconds(10);
+    const auto now = std::chrono::steady_clock::now();
+    if (hasTarget) {
+        shown = lastTarget;
+        shownAt = now;
+    } else if (std::chrono::duration_cast<std::chrono::milliseconds>(now - shownAt).count() > 80) {
+        return;
+    }
     POINT mp{};
     GetCursorPos(&mp);
     const ImVec2 from(static_cast<float>(mp.x), static_cast<float>(mp.y));
-    ImVec2 to(lastTarget.X, lastTarget.Y);
+    ImVec2 to(shown.X, shown.Y);
     const ImU32 col = IM_COL32((int)(variables::Aimbot::predictionLineColor.x * 255.0f), (int)(variables::Aimbot::predictionLineColor.y * 255.0f), (int)(variables::Aimbot::predictionLineColor.z * 255.0f), (int)(variables::Aimbot::predictionLineColor.w * 255.0f));
     dl->AddLine(from, to, IM_COL32(0, 0, 0, 255), variables::Aimbot::predictionLineThickness + 2.0f);
     dl->AddLine(from, to, col, variables::Aimbot::predictionLineThickness);
@@ -564,6 +609,19 @@ void RunAimbot(const RBX::Mat4& view) {
                         has = true;
                         break;
                     }
+                } else if (MlCache::charactersAddr) {
+                    for (auto& p : MlCache::players) {
+                        if (!p.isValid || (p.maxHealth > 0.0f && p.health <= 0.0f))
+                            continue;
+                        if (PlayersTab::IsFriend(p.name))
+                            continue;
+                        if (Keys::TeamCheckOn() && p.teamAddr && p.teamAddr == MlCache::localTeam)
+                            continue;
+                        if (!BestPartScreen(p, view, center, variables::Aimbot::fovRadius, camPos, checkVis, s, w))
+                            continue;
+                        has = true;
+                        break;
+                    }
                 } else {
                     for (auto& p : PlayerCache::players) {
                         if (!p.isValid || (p.maxHealth > 0.0f && p.health <= 0.0f))
@@ -628,6 +686,14 @@ void RunAimbot(const RBX::Mat4& view) {
             }
         }
         if (!targetAddr) {
+            for (auto& p : MlCache::players) {
+                if (p.isValid && PlayersTab::IsMarked(p.name)) {
+                    targetAddr = p.playerAddr;
+                    break;
+                }
+            }
+        }
+        if (!targetAddr) {
             for (auto& p : OpsCache::players) {
                 if (p.isValid && PlayersTab::IsMarked(p.name)) {
                     targetAddr = p.playerAddr;
@@ -666,11 +732,16 @@ void RunAimbot(const RBX::Mat4& view) {
                 } else if (variables::Aimbot::aimMethod == 2 || variables::Aimbot::magicBullet) {
                     PfSilent::SetActive(false, {});
                     ViewportSilent::Clear();
-                    MagicBullet::Ensure(true);
-                    MagicBullet::SetActive(true, w);
+                    FireMagicTarget(camPos, w);
                 } else if (variables::Aimbot::aimMethod == 1) {
                     PfSilent::SetActive(false, {});
                     ViewportSilent::SetTarget(w);
+                    MagicBullet::SetActive(false, {});
+                    MagicBullet::Ensure(false);
+                } else if (variables::Aimbot::aimMethod == 4) {
+                    PfSilent::SetActive(false, {});
+                    ViewportSilent::Clear();
+                    ApplyMouseAim(s);
                     MagicBullet::SetActive(false, {});
                     MagicBullet::Ensure(false);
                 } else {
@@ -730,11 +801,16 @@ void RunAimbot(const RBX::Mat4& view) {
         } else if (variables::Aimbot::aimMethod == 2 || variables::Aimbot::magicBullet) {
             PfSilent::SetActive(false, {});
             ViewportSilent::Clear();
-            MagicBullet::Ensure(true);
-            MagicBullet::SetActive(true, bestW);
+            FireMagicTarget(camPos, bestW);
         } else if (variables::Aimbot::aimMethod == 1) {
             PfSilent::SetActive(false, {});
             ViewportSilent::SetTarget(bestW);
+            MagicBullet::SetActive(false, {});
+            MagicBullet::Ensure(false);
+        } else if (variables::Aimbot::aimMethod == 4) {
+            PfSilent::SetActive(false, {});
+            ViewportSilent::Clear();
+            ApplyMouseAim(bestS);
             MagicBullet::SetActive(false, {});
             MagicBullet::Ensure(false);
         } else {
@@ -766,7 +842,7 @@ void RunAimbot(const RBX::Mat4& view) {
                 return;
             if (PlayersTab::IsFriend(p.name))
                 return;
-            if (Keys::TeamCheckOn() && p.teamAddr && (p.teamAddr == PlayerCache::localPlayerTeam || p.teamAddr == CbCache::localTeam || p.teamAddr == OpsCache::localTeam))
+            if (Keys::TeamCheckOn() && p.teamAddr && (p.teamAddr == PlayerCache::localPlayerTeam || p.teamAddr == CbCache::localTeam || p.teamAddr == MlCache::localTeam || p.teamAddr == OpsCache::localTeam))
                 return;
             const bool marked = PlayersTab::IsMarked(p.name);
             RBX::Vec2 s{};
@@ -783,6 +859,9 @@ void RunAimbot(const RBX::Mat4& view) {
                 consider(p);
         } else if (CbCache::charactersAddr) {
             for (auto& p : CbCache::players)
+                consider(p);
+        } else if (MlCache::charactersAddr) {
+            for (auto& p : MlCache::players)
                 consider(p);
         } else {
             for (auto& p : PlayerCache::players)
@@ -804,14 +883,18 @@ void RunAimbot(const RBX::Mat4& view) {
             std::lock_guard<std::mutex> lk(WorldCache::mtx);
             float nbest = variables::Aimbot::fovRadius;
             for (auto& e : WorldCache::entries) {
-                if (e.category != "soldier" && e.category != "animal") continue;
+                if (e.category != "soldier" && e.category != "animal" && e.category != "npc") continue;
+                if (e.humanoidAddr) {
+                    float liveHp = memory->read<float>(e.humanoidAddr + Offsets::Humanoid::Health);
+                    if (!std::isfinite(liveHp) || liveHp <= 0.0f) continue;
+                }
                 if (e.pos.X == 0 && e.pos.Y == 0 && e.pos.Z == 0) continue;
                 const RBX::Vec2 s = W2S::WorldToScreen(e.pos, view);
                 if (s.X == 0 && s.Y == 0) continue;
                 const float d = GetDistance2D(center, s);
                 if (d >= nbest) continue;
                 nbest = d;
-                nbPos = e.pos;
+                nbPos = (e.headPos.X != 0 || e.headPos.Y != 0 || e.headPos.Z != 0) ? e.headPos : e.pos;
                 nbVel = e.vel;
                 haveNpc = true;
             }
@@ -873,7 +956,7 @@ void RunAimbot(const RBX::Mat4& view) {
             return false;
         }
         const bool marked = PlayersTab::IsMarked(p.name);
-        if (!marked && Keys::TeamCheckOn() && p.teamAddr && (p.teamAddr == PlayerCache::localPlayerTeam || p.teamAddr == CbCache::localTeam || p.teamAddr == OpsCache::localTeam)) {
+        if (!marked && Keys::TeamCheckOn() && p.teamAddr && (p.teamAddr == PlayerCache::localPlayerTeam || p.teamAddr == CbCache::localTeam || p.teamAddr == MlCache::localTeam || p.teamAddr == OpsCache::localTeam)) {
             lockedPlayerAddr = 0;
             hasTarget = false;
             return false;
@@ -949,6 +1032,11 @@ void RunAimbot(const RBX::Mat4& view) {
                 if (trackOne(p))
                     break;
             }
+        } else if (MlCache::charactersAddr) {
+            for (auto& p : MlCache::players) {
+                if (trackOne(p))
+                    break;
+            }
         } else {
             for (auto& p : PlayerCache::players) {
                 if (trackOne(p))
@@ -988,20 +1076,16 @@ void RunAimbot(const RBX::Mat4& view) {
         MagicBullet::Ensure(false);
         return;
     }
+    if (variables::Aimbot::aimMethod == 4) {
+        ViewportSilent::Clear();
+        ApplyMouseAim(dst);
+        MagicBullet::SetActive(false, {});
+        MagicBullet::Ensure(false);
+        return;
+    }
     if (variables::Aimbot::aimMethod == 2 || variables::Aimbot::magicBullet) {
         ViewportSilent::Clear();
-        MagicBullet::Ensure(true);
-
-        RBX::Vec3 finalTarget = dstWorld;
-        if (variables::Aimbot::useSpread && variables::Aimbot::spreadModifier > 0.001f) {
-            static std::mt19937 hitRng(42);
-            std::uniform_real_distribution<float> pct(0.0f, 100.0f);
-            if (pct(hitRng) > variables::Aimbot::hitChance) {
-                finalTarget = ApplyRaycastSpread(camPos, dstWorld, variables::Aimbot::spreadModifier);
-            }
-        }
-
-        MagicBullet::SetActive(true, finalTarget);
+        FireMagicTarget(camPos, dstWorld);
         return;
     }
     ViewportSilent::Clear();

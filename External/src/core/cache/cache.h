@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #pragma once
 #include "../../../src/sdk/sdk.h"
 #include "../globals/globals.h"
@@ -115,12 +116,19 @@ inline LimbAddrs GetLimbs(std::uintptr_t characterAddr, bool validate = true) {
         } else {
 
             RBX::RbxInstance ch{characterAddr};
-            if (!e.head)
+            if (!e.head) {
                 e.head = ch.FindChild("Head").Addr;
+                if (!e.head)
+                    e.head = ch.FindChild("FakeHead").Addr;
+            }
+            if (!e.hrp)
+                e.hrp = ch.FindChild("Root").Addr;
             if (!e.torso) {
                 e.torso = ch.FindChild("Torso").Addr;
+                if (!e.torso)
+                    e.torso = ch.FindChild("LowerTorso").Addr;
                 if (e.torso)
-                    e.r6 = true;
+                    e.r6 = (ch.FindChild("Torso").Addr != 0);
             }
             if (e.r6) {
                 if (!e.lArm) e.lArm = ch.FindChild("Left Arm").Addr;
@@ -151,11 +159,17 @@ inline LimbAddrs GetLimbs(std::uintptr_t characterAddr, bool validate = true) {
     LimbAddrs l{};
     RBX::RbxInstance ch{characterAddr};
     auto head = ch.FindChild("Head");
+    if (!head.Addr)
+        head = ch.FindChild("FakeHead");
     auto hrp = ch.FindChild("HumanoidRootPart");
+    if (!hrp.Addr)
+        hrp = ch.FindChild("Root");
     l.head = head.Addr;
     l.hrp = hrp.Addr;
     auto torso = ch.FindChild("Torso");
-    l.r6 = torso.Addr != 0;
+    if (!torso.Addr)
+        torso = ch.FindChild("LowerTorso");
+    l.r6 = ch.FindChild("Torso").Addr != 0;
     l.torso = torso.Addr;
     if (l.r6) {
         l.lArm = ch.FindChild("Left Arm").Addr;
@@ -272,6 +286,7 @@ inline void updateplayers() {
         }
     }
     using Clock = std::chrono::steady_clock;
+    players.erase(std::remove_if(players.begin(), players.end(), [](const CachedPlayer& c) { return !c.isValid; }), players.end());
     static auto lastTopo = Clock::now() - std::chrono::seconds(10);
     if (Clock::now() - lastTopo < std::chrono::milliseconds(500))
         return;
@@ -357,6 +372,16 @@ inline void updateplayers() {
                         int nr = ScanRole(character.Addr);
                         DbgRoleChange(plr.Addr, slot->name, slot->role, nr);
                         slot->role = nr;
+                    }
+                    if (rescanMeta) {
+                        const auto& limbs = GetLimbs(character.Addr);
+                        if (limbs.head)
+                            slot->headAddr = limbs.head;
+                        if (limbs.hrp)
+                            slot->rootPartAddr = limbs.hrp;
+                        if (limbs.humanoid)
+                            slot->humanoidAddr = limbs.humanoid;
+                        slot->isR6 = limbs.r6;
                     }
                     if (needTool && rescanMeta) {
                         slot->tool = "None";

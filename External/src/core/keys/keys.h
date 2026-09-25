@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #pragma once
 #include <windows.h>
 #ifndef IMGUI_DEFINE_MATH_OPERATORS

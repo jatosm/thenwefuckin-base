@@ -1,4 +1,5 @@
-﻿#pragma once
+﻿// discord.gg/thenwefuckin
+#pragma once
 #include <windows.h>
 #include <TlHelp32.h>
 #include <cstdint>

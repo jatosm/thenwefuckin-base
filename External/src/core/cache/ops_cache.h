@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #pragma once
 #include "../../../src/sdk/sdk.h"
 #include "../globals/globals.h"

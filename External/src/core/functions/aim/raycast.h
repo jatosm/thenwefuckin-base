@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #pragma once
 #include "../../../sdk/sdk.h"
 #include <cstdint>

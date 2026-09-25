@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
 
 #define IMGUI_DEFINE_MATH_OPERATORS
@@ -27,6 +28,8 @@
 #include "../../core/cache/cache.h"
 
 #include "../../core/cache/cb_cache.h"
+
+#include "../../core/cache/ml_cache.h"
 
 #include "../../core/cache/pf_cache.h"
 
@@ -316,27 +319,35 @@ std::vector<std::string> CollectHotbar(){
 
   if(curTargetDbg.empty()) for(auto &pc : CbCache::players){ if(pc.isValid && (pc.characterAddr==curLocked || pc.playerAddr==curLocked || pc.rootPartAddr==curLocked)){ curTargetDbg=pc.name; break; } }
 
+  if(curTargetDbg.empty()) for(auto &pc : MlCache::players){ if(pc.isValid && (pc.characterAddr==curLocked || pc.playerAddr==curLocked || pc.rootPartAddr==curLocked)){ curTargetDbg=pc.name; break; } }
+
   if(curTargetDbg.empty()) for(auto &pc : PfCache::players){ if(pc.isValid && pc.modelAddr==curLocked){ curTargetDbg=pc.name; break; } }
 
  }
 
  bool needUpdate = std::chrono::duration_cast<std::chrono::milliseconds>(now-lastCollect).count()>300 || curTargetDbg!=cachedTargetDbg;
+ static std::string latchedTarget;
+ static auto latchedAt = std::chrono::steady_clock::now() - std::chrono::seconds(10);
+ if(!curTargetDbg.empty()){ latchedTarget=curTargetDbg; latchedAt=now; }
+ std::string useTarget = curTargetDbg;
+ if(useTarget.empty() && std::chrono::duration_cast<std::chrono::milliseconds>(now-latchedAt).count()<300) useTarget=latchedTarget;
+ if(useTarget!=cachedTargetDbg) needUpdate=true;
 
  if(!needUpdate) return cachedOut;
 
- lastCollect=now; cachedTargetDbg=curTargetDbg;
+ lastCollect=now; cachedTargetDbg=useTarget;
 
  std::vector<std::string> out(6,"");
 
  std::string debugSrc="none";
 
- if(!curTargetDbg.empty()){
+ if(!useTarget.empty()){
 
-  debugSrc="target:"+curTargetDbg;
+  debugSrc="target:"+useTarget;
 
   if(Globals::players.Addr){
 
-   auto plr=Globals::players.FindChild(curTargetDbg);
+   auto plr=Globals::players.FindChild(useTarget);
 
    if(plr.Addr){
 

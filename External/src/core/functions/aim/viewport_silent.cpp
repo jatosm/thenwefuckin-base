@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #include "viewport_silent.h"
 #include "../../globals/globals.h"
 #include "../../../memory/memory.h"

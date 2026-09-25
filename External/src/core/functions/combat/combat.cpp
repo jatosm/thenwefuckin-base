@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #include "combat.h"
 #include "../../globals/globals.h"
 

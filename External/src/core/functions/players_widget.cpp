@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
 #define IMGUI_DEFINE_MATH_OPERATORS
 #endif
@@ -30,9 +31,9 @@ void SetOpen(bool open){ g_open=open; }
 bool IsOpen(){ return g_open; }
 namespace {
 struct Thumb { ID3D11ShaderResourceView* tex=nullptr; int w=0,h=0; bool loading=false; };
-std::unordered_map<int, Thumb> g_thumbs;
+std::unordered_map<long long, Thumb> g_thumbs;
 std::mutex g_thumbMtx;
-std::unordered_set<int> g_pending;
+std::unordered_set<long long> g_pending;
 std::string HttpGet(const std::wstring& host, const std::wstring& path){
     std::string out;
     HINTERNET hS=WinHttpOpen(L"jatos/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, nullptr,nullptr,0);
@@ -66,7 +67,7 @@ std::string ExtractImageUrl(const std::string& json){
     size_t pos=url.find("\\u0026"); while(pos!=std::string::npos){ url.replace(pos,6,"&"); pos=url.find("\\u0026",pos+1); }
     return url;
 }
-void RequestThumb(int uid){
+void RequestThumb(long long uid){
     if(uid<=0) return;
     {
         std::lock_guard<std::mutex> lk(g_thumbMtx);
@@ -113,11 +114,11 @@ void RequestThumb(int uid){
         std::lock_guard<std::mutex> lk(g_thumbMtx); g_pending.erase(uid);
     }).detach();
 }
-int GetUserIdForName(const std::string& name){
+long long GetUserIdForName(const std::string& name){
     if(name.empty() || !Globals::players.Addr) return 0;
     auto plr = Globals::players.FindChild(name);
     if(!plr.Addr) return 0;
-    int uid = memory->read<int>(plr.Addr + Offsets::Player::UserId);
+    long long uid = memory->read<long long>(plr.Addr + Offsets::Player::UserId);
     return uid>0?uid:0;
 }
 }
@@ -218,7 +219,7 @@ void RenderWindow(ID3D11Device* device){
             const ImVec2 previewMin=ImVec2(cardRMin.x + (350.f-previewSize)*0.5f, cur.y);
             const ImVec2 previewMax=previewMin+ImVec2(previewSize,previewSize);
 
-            int uid=GetUserIdForName(PlayersTab::selected);
+            long long uid=GetUserIdForName(PlayersTab::selected);
             if(uid>0) RequestThumb(uid);
             Thumb thumb{}; bool hasThumb=false;
             {
@@ -226,7 +227,7 @@ void RenderWindow(ID3D11Device* device){
                 auto it=g_thumbs.find(uid);
                 if(it!=g_thumbs.end() && it->second.tex){ thumb=it->second; hasThumb=true; }
             }
-            static float pwZoom=1.0f; static int pwUid=-1;
+            static float pwZoom=1.0f; static long long pwUid=-1;
             if(pwUid!=uid){ pwUid=uid; pwZoom=1.0f; }
             ImGui::SetCursorScreenPos(previewMin);
             ImGui::InvisibleButton("##preview_interact", ImVec2(previewSize,previewSize));
@@ -263,6 +264,7 @@ void RenderWindow(ID3D11Device* device){
                 const PlayerCache::CachedPlayer* cp=nullptr;
                 for(auto &p: PlayerCache::players) if(p.name==PlayersTab::selected){ cp=&p; break; }
                 if(!cp) for(auto &p: CbCache::players) if(p.name==PlayersTab::selected){ cp=&p; break; }
+            if(!cp) for(auto &p: MlCache::players) if(p.name==PlayersTab::selected){ cp=&p; break; }
                 if(cp && cp->isValid && cp->maxHealth>0){
                     float pct=cp->health/cp->maxHealth; pct=pct<0?0:(pct>1?1:pct);
                     ImVec2 hbMin=ImVec2(previewMin.x-6.f, previewMin.y);

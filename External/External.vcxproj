@@ -64,6 +64,7 @@
     <ClInclude Include="ext\imgui\imstb_truetype.h" />
     <ClInclude Include="src\core\cache\cache.h" />
     <ClInclude Include="src\core\cache\cb_cache.h" />
+    <ClInclude Include="src\core\cache\ml_cache.h" />
     <ClInclude Include="src\core\cache\pf_cache.h" />
     <ClInclude Include="src\core\functions\aim\fallen_prediction.h" />
     <ClInclude Include="src\core\functions\aim\viewport_silent.h" />
@@ -179,6 +180,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)ext\imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
@@ -209,6 +211,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)ext\imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>

@@ -1,4 +1,5 @@
-﻿#include "memory.h"
+﻿// discord.gg/thenwefuckin
+#include "memory.h"
 #include "../core/logger/logger.h"
 #include <Psapi.h>
 

@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #pragma once
 #include "../../../../src/sdk/w2s.h"
 #include "../../../../src/core/cache/cache.h"

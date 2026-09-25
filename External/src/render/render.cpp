@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
 #define IMGUI_DEFINE_MATH_OPERATORS
 #endif
@@ -25,6 +26,7 @@
 #include "../../src/core/cache/cache.h"
 #include "../../src/core/cache/pf_cache.h"
 #include "../../src/core/cache/cb_cache.h"
+#include "../../src/core/cache/ml_cache.h"
 #include "../../src/core/cache/ops_cache.h"
 #include "../../src/core/net/ping.h"
 #include "../../src/sdk/offsets.h"
@@ -404,48 +406,72 @@ void OverlayWindow::RenderMenu() {
     const float eased = 1.0f - std::pow(1.0f - tabAnim, 3.0f);
     imGuiCustom::g_contentOffset = ImVec2((1.0f - eased) * 22.0f * slideDir, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, menuFade);
-    ImGui::SetNextWindowSize(ImVec2(601.0f, 390.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowPos(ImVec2(80.0f, 80.0f), ImGuiCond_FirstUseEver);
+    constexpr float MENU_W = 620.0f;
+    constexpr float MENU_H = 540.0f;
+    constexpr float PANEL_TOP = 58.0f;
+    constexpr float PANEL_BOT = 530.0f;
+    constexpr float PANEL_H = PANEL_BOT - PANEL_TOP;
+    ImGui::SetNextWindowSize(ImVec2(MENU_W, MENU_H), ImGuiCond_Always);
+    {
+        const int sw = GetSystemMetrics(SM_CXSCREEN);
+        const int sh = GetSystemMetrics(SM_CYSCREEN);
+        const float px = (sw > MENU_W) ? (float)(sw - (int)MENU_W) * 0.5f : 10.0f;
+        const float py = (sh > MENU_H) ? (float)(sh - (int)MENU_H) * 0.5f : 10.0f;
+        ImGui::SetNextWindowPos(ImVec2(px, py), ImGuiCond_FirstUseEver);
+    }
     ImGui::Begin("jatos", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     const imGuiCustom::Theme& theme = imGuiCustom::GetTheme();
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 origin = ImVec2(std::floor(ImGui::GetWindowPos().x), std::floor(ImGui::GetWindowPos().y));
-    const ImVec2 winMax = origin + ImVec2(601.0f, 390.0f);
+    const ImVec2 winMax = origin + ImVec2(MENU_W, MENU_H);
     draw->AddRectFilled(origin, winMax, imGuiCustom::ColorU32(theme.WindowBg), 0.0f);
     draw->AddRect(origin, winMax, imGuiCustom::OutlineBlack(), 0.0f, 0, 1.0f);
     draw->AddRect(origin + ImVec2(1.0f, 1.0f), winMax - ImVec2(1.0f, 1.0f), imGuiCustom::OutlineInner(), 0.0f, 0, 1.0f);
-    draw->AddRectFilled(origin, origin + ImVec2(601.0f, 1.5f), imGuiCustom::ColorU32(ImVec4(0.5373f, 0.7647f, 0.7490f, 1.0f)));
+    draw->AddRectFilled(origin, origin + ImVec2(MENU_W, 1.5f), imGuiCustom::ColorU32(ImVec4(0.5373f, 0.7647f, 0.7490f, 1.0f)));
     const imGuiCustom::Fonts& fonts = imGuiCustom::GetFonts();
     ImFont* title_font = fonts.CascadiaMonoBL ? fonts.CascadiaMonoBL : ImGui::GetFont();
-    const ImVec2 title_sz = title_font->CalcTextSizeA(12.0f * imGuiCustom::g_fontScale, FLT_MAX, 0.0f, "jatos");
-    draw->AddText(title_font, 12.0f * imGuiCustom::g_fontScale, origin + ImVec2(std::floor((601.0f - title_sz.x) * 0.5f), 3.5f), imGuiCustom::ColorU32(theme.TextBright), "jatos");
-    const float tab_widths[] = {145.0f, 145.0f, 145.0f, 146.0f};
-    float cur_x = 6.0f;
+    const ImVec2 title_sz = title_font->CalcTextSizeA(12.0f * imGuiCustom::g_fontScale, FLT_MAX, 0.0f, "jatos | discord.gg/thenwefuckin");
+    draw->AddText(title_font, 12.0f * imGuiCustom::g_fontScale, origin + ImVec2(std::floor((MENU_W - title_sz.x) * 0.5f), 3.5f), imGuiCustom::ColorU32(theme.TextBright), "jatos | discord.gg/thenwefuckin");
+    const float tab_widths[] = {144.0f, 144.0f, 144.0f, 144.0f};
+    float cur_x = 10.0f;
     for (int i = 0; i < 4; ++i) {
-        if (DrawTab(kTabs[i], variables::selectedTab == i, ImVec2(cur_x, 16.0f), ImVec2(tab_widths[i], 18.0f)))
+        if (DrawTab(kTabs[i], variables::selectedTab == i, ImVec2(cur_x, 16.0f), ImVec2(tab_widths[i], 16.0f)))
             variables::selectedTab = i;
-        cur_x += tab_widths[i] + 3.0f;
+        cur_x += tab_widths[i] + 8.0f;
+    }
+    {
+        const char* const* subLabels = nullptr;
+        int* subSel = nullptr;
+        if (variables::selectedTab == 0) { static const char* l[] = {"Checks", "Accuracy", "Trigger"}; subLabels = l; subSel = &variables::selectedAimSub; }
+        else if (variables::selectedTab == 1) { static const char* l[] = {"Filters", "World", "Lighting"}; subLabels = l; subSel = &variables::selectedVisualSub; }
+        else if (variables::selectedTab == 2) { static const char* l[] = {"General", "Movement", "Player"}; subLabels = l; subSel = &variables::selectedMicsSub; }
+        else { static const char* l[] = {"Fonts", "Colors", "Text"}; subLabels = l; subSel = &variables::selectedSettingsSub; }
+        constexpr float sub_widths[] = {197.0f, 197.0f, 198.0f};
+        float sub_x = 10.0f;
+        for (int i = 0; i < 3; ++i) {
+            if (DrawTab(subLabels[i], *subSel == i, ImVec2(sub_x, 36.0f), ImVec2(sub_widths[i], 16.0f)))
+                *subSel = i;
+            sub_x += sub_widths[i] + 4.0f;
+        }
     }
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, menuFade * eased);
-    draw->PushClipRect(origin + ImVec2(6.0f, 40.0f), origin + ImVec2(595.0f, 380.0f), true);
+    draw->PushClipRect(origin + ImVec2(10.0f, PANEL_TOP), origin + ImVec2(610.0f, PANEL_BOT), true);
     if (variables::selectedTab == 0) {
-        DrawPanel("aim_left", ImVec2(6.0f, 40.0f), ImVec2(290.0f, 340.0f));
-        DrawPanel("aim_right", ImVec2(305.0f, 40.0f), ImVec2(290.0f, 340.0f));
+        DrawPanel("aim_left", ImVec2(10.0f, PANEL_TOP), ImVec2(295.0f, PANEL_H));
+        DrawPanel("aim_right", ImVec2(315.0f, PANEL_TOP), ImVec2(295.0f, PANEL_H));
         Settings::RenderAimMenu();
     } else if (variables::selectedTab == 1) {
-        DrawPanel("visual_left", ImVec2(6.0f, 40.0f), ImVec2(290.0f, 340.0f));
-        DrawPanel("visual_right_top", ImVec2(305.0f, 40.0f), ImVec2(290.0f, 48.0f));
-        DrawPanel("visual_world", ImVec2(305.0f, 96.0f), ImVec2(290.0f, 138.0f));
-        DrawPanel("visual_lighting", ImVec2(305.0f, 242.0f), ImVec2(290.0f, 138.0f));
+        DrawPanel("visual_left", ImVec2(10.0f, PANEL_TOP), ImVec2(295.0f, PANEL_H));
+        DrawPanel("visual_right", ImVec2(315.0f, PANEL_TOP), ImVec2(295.0f, PANEL_H));
         Settings::RenderVisualMenu();
     } else if (variables::selectedTab == 2) {
-        DrawPanel("mics_left", ImVec2(6.0f, 40.0f), ImVec2(290.0f, 340.0f));
-        DrawPanel("mics_right", ImVec2(305.0f, 40.0f), ImVec2(290.0f, 340.0f));
+        DrawPanel("mics_left", ImVec2(10.0f, PANEL_TOP), ImVec2(295.0f, PANEL_H));
+        DrawPanel("mics_right", ImVec2(315.0f, PANEL_TOP), ImVec2(295.0f, PANEL_H));
         Mics::RenderLocalMenu();
         Mics::RenderMiscMenu();
     } else {
-        DrawPanel("settings_left", ImVec2(6.0f, 40.0f), ImVec2(290.0f, 340.0f));
-        DrawPanel("settings_right", ImVec2(305.0f, 40.0f), ImVec2(290.0f, 340.0f));
+        DrawPanel("settings_left", ImVec2(10.0f, PANEL_TOP), ImVec2(295.0f, PANEL_H));
+        DrawPanel("settings_right", ImVec2(315.0f, PANEL_TOP), ImVec2(295.0f, PANEL_H));
         Settings::RenderSettingsMenu();
     }
     draw->PopClipRect();
@@ -563,11 +589,11 @@ void OverlayWindow::render(ImDrawList* drawList) {
         std::memcpy(clock, cachedClock, sizeof(clock));
     }
     const int ping = Ping::GetMs();
-    char text[256];
+    char text[320];
     if (ping >= 0)
-        std::snprintf(text, sizeof(text), "jatos | %d fps | %s | players %d pf %d cb %d ops %d | %dms | %s", fps, Offsets::ClientVersion.c_str(), (int)PlayerCache::players.size(), (int)PfCache::players.size(), (int)CbCache::players.size(), (int)OpsCache::players.size(), ping, clock);
+        std::snprintf(text, sizeof(text), "jatos [discord.gg/thenwefuckin] | %d fps | %s | players %d pf %d cb %d ml %d ops %d | %dms | %s", fps, Offsets::ClientVersion.c_str(), (int)PlayerCache::players.size(), (int)PfCache::players.size(), (int)CbCache::players.size(), (int)MlCache::players.size(), (int)OpsCache::players.size(), ping, clock);
     else
-        std::snprintf(text, sizeof(text), "jatos | %d fps | %s | players %d pf %d cb %d ops %d | -- | %s", fps, Offsets::ClientVersion.c_str(), (int)PlayerCache::players.size(), (int)PfCache::players.size(), (int)CbCache::players.size(), (int)OpsCache::players.size(), clock);
+        std::snprintf(text, sizeof(text), "jatos [discord.gg/thenwefuckin] | %d fps | %s | players %d pf %d cb %d ml %d ops %d | -- | %s", fps, Offsets::ClientVersion.c_str(), (int)PlayerCache::players.size(), (int)PfCache::players.size(), (int)CbCache::players.size(), (int)MlCache::players.size(), (int)OpsCache::players.size(), clock);
 
     if (Keys::KeybindsOn() && Keys::WatermarkOn()) {
         static bool wFovTog=false,wFovWas=false,wFlyTog=false,wFlyWas=false,wNoclipTog=false,wNoclipWas=false;

@@ -1,0 +1,192 @@
+# thenwefuckin-base (jatos)
+
+An advanced external framework with multi-game support, DirectX 11 overlay rendering, complete ESP visuals, silent aim & physics prediction, world/object caching, movement exploits, interactive tools, and custom theming.
+
+**AIM**
+- Aimbot Methods:
+  - Memory Aim (Smooth cursor / angle writing)
+  - Viewport Silent Aim
+  - Raycast Silent Aim
+  - PF Silent Aim (Phantom Forces silent bullet hook)
+  - Magic Bullet (Hit position manipulation)
+- Target Hitboxes:
+  - Head, Torso, Left Arm, Right Arm, Left Leg, Right Leg, HumanoidRootPart (HRP), Closest Part
+- Target Filtering & Checks:
+  - Visible Check (Cached 3D collision geometry raycast)
+  - Team Check (Keybind + Hold/Toggle mode)
+  - Knocked / Downed Check
+  - Forcefield / Spawn Immunity Check
+  - Spectate Check
+  - Health Check (Minimum health slider filter)
+  - Include NPCs / Mobs
+- Prediction & Tracking Physics:
+  - Multi-point physics prediction
+  - Global Prediction (X and Y horizontal/vertical lead sliders)
+  - Fallen Prediction (Automatic weapon detection, custom Bullet Velocity override, Gravity Multiplier)
+  - Movement-history velocity regression with turn damping
+- Aim Adjustments & Accuracy:
+  - Deadzone (Configurable deadzone radius slider)
+  - Spread Modifier & Spread Amount
+  - Hit Chance percentage slider (0% - 100%)
+  - Smoothing divisor (Humanized tracking rate)
+  - Sticky Aim & Auto Switch target lock
+  - 360 Mode (Keybind + Hold/Toggle mode)
+- Triggerbot:
+  - Keybind selection (Hold / Toggle / Always)
+  - Trigger delay slider (ms)
+- Aim Visuals:
+  - FOV Circle (Radius slider + Outline Color picker)
+  - FOV Fill (Toggle + Fill Color picker with alpha)
+  - Silent Tracer line (Color picker + Thickness slider)
+  - Prediction Path line (Color picker + Thickness slider)
+- Multi-Game Target Resolvers:
+  - Standard Players cache
+  - Phantom Forces cache (PfCache)
+  - Counter Blox cache (CbCache)
+  - Operations cache (OpsCache)
+  - Male Rig direct Workspace cache (MlCache)
+
+**VISUALS**
+- Player Boxes:
+  - 2D Bounding Boxes (Full + Outlines)
+  - Dynamic Perspective & Static Bounds modes
+  - Box Fill (Single Color / Gradient)
+  - Primary & Secondary Fill Color customization
+- Player Info Overlays:
+  - Player Names (Toggle + Color picker)
+  - Distance (Studs / Meters readout + Color picker)
+  - Held Tool / Weapon Name + Color picker
+  - Dynamic Health Bar (2px + Outline, real-time color transitions)
+  - Head Dot (Toggle + Size slider + Color picker)
+  - View Direction Ray (Toggle + Length slider + Color picker)
+  - Skeleton Bone ESP (Toggle + Thickness slider + Outlines + Color picker)
+- Player Flags (Individual Toggles & Color):
+  - State (Knocked / Stunned)
+  - Rig Type (R6 / R15)
+  - Health Amount
+  - Tool Name
+  - Distance
+  - Velocity
+  - Team
+  - Role (Sheriff / Murderer / Civilian)
+- Filters & Highlight Controls:
+  - Team Check (Friendly / teammate filter)
+  - Local Player ESP
+  - Dead Check (Instant corpse / ragdoll despawn)
+  - Friend Hide (Hide friends from visual clutter)
+  - Active Target Highlight ([TARGET] indicator)
+- DirectX Mesh Chams:
+  - Hardware DX11 vertex and pixel shader chams
+  - Visible & Occluded (Through-Wall) rendering modes
+  - Distinct Visible & Occluded Color pickers
+  - Distance LOD (Level of Detail) optimization
+- Full Color Customization:
+  - Independent color pickers for every visual element
+
+**WORLD**
+- World ESP:
+  - Master World toggle, Name label, Distance label
+- Ores & Minerals:
+  - Stone, Phosphate, Metal
+  - Individual selection toggles & dedicated color pickers
+- Plants & Foraging:
+  - Wool, Blueberry, Raspberry, Lemon, Corn, Pumpkin, Tomato
+  - Individual selection toggles & dedicated color pickers
+- Animals & Fauna:
+  - Deer, Wild Boar, Wolf
+  - Individual selection toggles, custom color pickers, 3D Bounding Box, Health readout
+- Soldiers & NPCs (Project Delta):
+  - Boris, Bruno, Brutus, Soldier
+  - Full support for 69 soldier varieties
+  - Individual toggles, custom color pickers, 3D Bounding Box, Health readout
+- Murder Mystery (MM2):
+  - Murderer Color picker
+  - Sheriff Color picker
+  - Innocent Color picker
+- Tools & Base Deployables:
+  - Base Cabinet, Storages, Anvil, Furnace, Sleeping Bag, Bed, Workbench, Campfire
+  - 3D Bounding Box rendering + custom color pickers
+- Crates & Containers:
+  - 34 distinct crate & loot container categories with individual toggles & color pickers
+- Dropped Items:
+  - Ground loot, dead drops, and pickup models with custom color picker
+- Keycards:
+  - Red, Blue, Green, Yellow, Purple keycards (Individual toggles, color pickers, 3D position)
+- Collision Wireframe:
+  - Real-time world geometry wireframe rendering
+- Lighting & Atmosphere Modifiers:
+  - Clock Time override (0.0h – 24.0h slider)
+  - Brightness slider
+  - Ambient Color picker
+  - Outdoor Ambient Color picker
+  - Fog modifier (Fog Start slider, Fog End slider, Fog Color picker)
+  - Exposure value slider
+  - Custom Skybox: Presets + custom asset IDs for 6 faces (Back, Down, Front, Left, Right, Up)
+
+**MOVEMENT**
+- Speed & Jump Modifiers:
+  - WalkSpeed modifier (Toggle + Speed slider)
+  - JumpPower modifier (Toggle + Power slider + Keybind)
+  - BunnyHop (Auto-jump + speed slider + keybind)
+  - HipHeight modifier (Toggle + Height slider)
+  - Gravity modifier (Toggle + Gravity slider)
+- Flight & NoClip:
+  - Fly (Velocity-based flight, Speed slider, Vertical Boost, Damping slider, Keybind Hold/Toggle)
+  - Chat typing check (Prevents movement/flying while typing in chat)
+  - Noclip (Keybind Hold/Toggle, All Parts vs. Root Only modes)
+- Freecam:
+  - Detached spectator camera
+  - Speed slider, Sensitivity slider, Shift Speed Multiplier slider
+  - AZERTY / QWERTY layout support
+  - Freeze Character option
+- Field of View:
+  - FOV Changer (Toggle + Custom Field of View slider + Keybind)
+- Combat Movement & Physics:
+  - Hitbox Expander (Toggle, X / Y / Z size sliders, Team Check, Knock Check)
+  - Spiderman (Wall climb / surface stick)
+  - No Fall Damage
+  - Custom Tickrate (Physics rate slider up to 240Hz)
+
+**MISC**
+- Stream Proof:
+  - Transparency & capture hook exclusion (Hidden from OBS, Discord stream, and screen capture)
+- Watermark & HUD:
+  - Real-time overlay showing FPS, Client Version, Active Player counts across games, Ping (ms), Clock Time, and active keybind states
+- Keybind System:
+  - Complete key rebinding system with Hold, Toggle, and Always-on modes
+  - Interactive on-screen Keybind List overlay
+- Players Roster Window:
+  - Searchable player list, role badges, target lock selector, and friend tagger
+- Backpack Viewer:
+  - Enemy hotbar & inventory inspector with embedded Roblox item icons and on-screen slot HUD overlay
+- Interactive Player Preview:
+  - 3D software-rasterized live avatar viewport
+  - Turntable rotation with mouse drag & wheel zoom
+  - Health bar sweep animation demo
+  - Skeleton joint tracker and facing direction indicator
+- Remote Teleport Handler:
+  - Safe coordinate teleportation system (tp_handler)
+- Explorer Window:
+  - Full Dex-style instance hierarchy tree viewer
+  - Live property inspection & bytecode extraction
+  - Image and texture dumper
+
+**SETTINGS**
+- Engine Optimization:
+  - VSync (Hardware sync / tearing support)
+  - FPS Limiter (Custom refresh caps)
+  - Process Priority manager (Normal, High, Realtime)
+- Interface & Text Scaling:
+  - Menu Font Size scaling slider
+  - ESP Font Size scaling slider
+  - Direct numerical text entry on click for all sliders
+- Full Theme Engine:
+  - Background, Panels, Controls, Accent, Text, and Text Bright color pickers
+  - One-click Theme Reset to Default
+- Config Management:
+  - Save, Load, Export, and Import configurations via .config files
+  - Hot-swappable profiles
+
+https://github.com/jatosm/thenwefuckin-base
+https://discord.gg/thenwefuckin
+https://jatos.lol/

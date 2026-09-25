@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #pragma once
 #include "../../src/sdk/offsets.h"
 #include "../../src/sdk/math.h"

@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #pragma once
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
 #define IMGUI_DEFINE_MATH_OPERATORS
@@ -6,6 +7,7 @@
 #include "../../cache/cache.h"
 #include "../../cache/pf_cache.h"
 #include "../../cache/cb_cache.h"
+#include "../../cache/ml_cache.h"
 #include "../../cache/ops_cache.h"
 #include "../../globals/globals.h"
 #include "../../../../ext/imgui/imgui.h"
@@ -59,6 +61,10 @@ inline std::vector<Entry> Gather() {
     }
 
     for (auto& p : CbCache::players) {
+        push(p.name, p.headAddr, p.rootPartAddr, 1);
+    }
+
+    for (auto& p : MlCache::players) {
         push(p.name, p.headAddr, p.rootPartAddr, 1);
     }
 
@@ -141,6 +147,14 @@ inline RBX::Vec3 ResolveTargetPos(const Entry& e) {
     }
 
     for (auto& cp : CbCache::players) {
+        if (cp.name == e.name) {
+            p = PartPosOf(cp.rootPartAddr ? cp.rootPartAddr : cp.headAddr);
+            if (p.X != 0 || p.Y != 0 || p.Z != 0)
+                return p;
+        }
+    }
+
+    for (auto& cp : MlCache::players) {
         if (cp.name == e.name) {
             p = PartPosOf(cp.rootPartAddr ? cp.rootPartAddr : cp.headAddr);
             if (p.X != 0 || p.Y != 0 || p.Z != 0)
@@ -297,6 +311,15 @@ inline void RenderMenu() {
         }
         if (!cp) {
             for (auto& p : CbCache::players) {
+                if (p.name == selected) {
+                    cp = &p;
+                    gameSource = 1;
+                    break;
+                }
+            }
+        }
+        if (!cp) {
+            for (auto& p : MlCache::players) {
                 if (p.name == selected) {
                     cp = &p;
                     gameSource = 1;

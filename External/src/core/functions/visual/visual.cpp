@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
 #define IMGUI_DEFINE_MATH_OPERATORS
 #endif
@@ -7,13 +8,16 @@
 #include "../../cache/worldcache.h"
 #include "../../cache/pf_cache.h"
 #include "../../cache/cb_cache.h"
+#include "../../cache/ml_cache.h"
 #include "../../cache/ops_cache.h"
 #include "../players/players.h"
 #include <cmath>
 #include <cstdio>
 #include <algorithm>
+#include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include "../../features/mesh/cache/MeshCache.h"
 #include "../../features/mesh/chams/MeshChams.h"
 #include "../../features/mesh/shader/MeshDxShader.h"
@@ -124,6 +128,45 @@ void BoneAddr(ImDrawList* dl, std::uintptr_t a, std::uintptr_t b, const RBX::Mat
     Bone(dl, pa, pb, v);
 }
 
+bool ProjectPoint(const RBX::Vec3& w, const RBX::Mat4& v, RBX::Vec2& out) {
+    const float ww = w.X * v.data[12] + w.Y * v.data[13] + w.Z * v.data[14] + v.data[15];
+    if (!(ww >= 1.0f))
+        return false;
+    const auto s = W2S::WorldToScreen(w, v);
+    if (s.X == 0 && s.Y == 0)
+        return false;
+    out = s;
+    return true;
+}
+
+float EspFocal(float viewH) {
+    float fov = 70.0f * 0.0174533f;
+    if (Globals::camera.Addr) {
+        const float live = memory->read<float>(Globals::camera.Addr + Offsets::Camera::FieldOfView);
+        if (std::isfinite(live) && live > 0.2f && live < 3.0f)
+            fov = live;
+    }
+    const float t = tanf(fov * 0.5f);
+    if (!(t > 0.05f))
+        return viewH * 0.7f;
+    return (viewH * 0.5f) / t;
+}
+
+bool SanityBox(float dist, float x0, float y0, float x1, float y1, float focal) {
+    const float w = x1 - x0, h = y1 - y0;
+    if (!(h > 3.0f) || !(w > 2.0f))
+        return false;
+    if (!(dist >= 1.0f))
+        dist = 1.0f;
+    const float expH = 5.5f * focal / dist;
+    const float expW = 2.4f * focal / dist;
+    if (h > expH * 3.0f + 30.0f)
+        return false;
+    if (w > expW * 4.0f + 30.0f)
+        return false;
+    return true;
+}
+
 bool DynamicBounds(const PlayerCache::LimbAddrs& l, bool r6, const RBX::Mat4& v, float& x0, float& x1, float& y0, float& y1) {
     if (!l.head || !l.hrp)
         return false;
@@ -158,8 +201,8 @@ bool DynamicBoundsEx(const PlayerCache::LimbAddrs& l, bool r6, const RBX::Mat4& 
     bool any = false;
     float mnX = 1e9f, mxX = -1e9f, mnY = 1e9f, mxY = -1e9f;
     for (int i = 0; i < n; ++i) {
-        const auto s = W2S::WorldToScreen(pts[i], v);
-        if (s.X == 0 && s.Y == 0)
+        RBX::Vec2 s{};
+        if (!ProjectPoint(pts[i], v, s))
             continue;
         any = true;
         if (s.X < mnX) mnX = s.X;
@@ -345,6 +388,13 @@ void RenderOnePlayer(ImDrawList* dl, const RBX::Mat4& v, const PlayerCache::Cach
         return;
     if (p.maxHealth > 0.0f && p.health <= 0.0f)
         return;
+    if (p.humanoidAddr) {
+        const float liveHp = memory->read<float>(p.humanoidAddr + Offsets::Humanoid::Health);
+        if (!std::isfinite(liveHp) || liveHp <= 0.0f)
+            return;
+    } else if (!std::isfinite(p.health)) {
+        return;
+    }
     const auto cp = memory->read<std::uintptr_t>(p.characterAddr + Offsets::Instance::Parent);
     if (!cp)
         return;
@@ -361,6 +411,10 @@ void RenderOnePlayer(ImDrawList* dl, const RBX::Mat4& v, const PlayerCache::Cach
     const RBX::Vec3 rp = PartPos(p.rootPartAddr);
     if ((hp.X == 0 && hp.Y == 0 && hp.Z == 0) || (rp.X == 0 && rp.Y == 0 && rp.Z == 0))
         return;
+    if (memory->read<std::uintptr_t>(p.headAddr + Offsets::Instance::Parent) != p.characterAddr)
+        return;
+    if (memory->read<std::uintptr_t>(p.rootPartAddr + Offsets::Instance::Parent) != p.characterAddr)
+        return;
     const float dist = sqrtf((rp.X - lp.X) * (rp.X - lp.X) + (rp.Y - lp.Y) * (rp.Y - lp.Y) + (rp.Z - lp.Z) * (rp.Z - lp.Z));
     float x0, x1, y0, y1;
     if (variables::ESP::boxMode == 1) {
@@ -369,9 +423,8 @@ void RenderOnePlayer(ImDrawList* dl, const RBX::Mat4& v, const PlayerCache::Cach
     } else {
         RBX::Vec3 top3{hp.X, hp.Y + 0.5f, hp.Z};
         RBX::Vec3 bot3{rp.X, rp.Y - (r6 ? 3.0f : 2.5f), rp.Z};
-        const auto top = W2S::WorldToScreen(top3, v);
-        const auto bot = W2S::WorldToScreen(bot3, v);
-        if ((top.X == 0 && top.Y == 0) || (bot.X == 0 && bot.Y == 0))
+        RBX::Vec2 top{}, bot{};
+        if (!ProjectPoint(top3, v, top) || !ProjectPoint(bot3, v, bot))
             return;
         const float h = bot.Y - top.Y;
         const float w = h * 0.55f;
@@ -380,6 +433,8 @@ void RenderOnePlayer(ImDrawList* dl, const RBX::Mat4& v, const PlayerCache::Cach
         y0 = top.Y;
         y1 = bot.Y;
     }
+    if (!SanityBox(dist, x0, y0, x1, y1, EspFocal(disp.y)))
+        return;
     if (x0 < -500 || y0 < -500 || x1 > disp.x + 500 || y1 > disp.y + 500)
         return;
     if (variables::ESP::boxes)
@@ -540,40 +595,75 @@ void RenderESP(ImDrawList* dl, const RBX::Mat4& v) {
     const bool needPrim = needFlagsVel || variables::ESP::viewDirection;
     ImFont* font = EspFont();
     const float espSize = EspSize();
+    std::unordered_set<std::string> drawn;
+    auto alreadyDrawn = [&](const std::string& n) {
+        return !n.empty() && drawn.find(n) != drawn.end();
+    };
     if (OpsCache::viewmodelsAddr) {
         for (auto& p : OpsCache::players) {
             if (!p.isValid)
+                continue;
+            if (alreadyDrawn(p.name))
                 continue;
             if (Keys::TeamCheckOn() && p.teamAddr && p.teamAddr == OpsCache::localTeam && !PlayersTab::IsMarked(p.name))
                 continue;
             RenderOnePlayer(dl, v, p, OpsCache::localPos, font, espSize, disp,
                 boxCol, nameCol, distCol, toolCol, flagsCol, headDotCol, viewDirCol, skelCol,
                 murderCol, sheriffCol, innocentCol, needFlagsVel, needPrim);
+            if (!p.name.empty())
+                drawn.insert(p.name);
         }
     } else if (CbCache::charactersAddr) {
         for (auto& p : CbCache::players) {
             if (!p.isValid)
+                continue;
+            if (alreadyDrawn(p.name))
                 continue;
             if (Keys::TeamCheckOn() && p.teamAddr && p.teamAddr == CbCache::localTeam && !PlayersTab::IsMarked(p.name))
                 continue;
             RenderOnePlayer(dl, v, p, CbCache::localPos, font, espSize, disp,
                 boxCol, nameCol, distCol, toolCol, flagsCol, headDotCol, viewDirCol, skelCol,
                 murderCol, sheriffCol, innocentCol, needFlagsVel, needPrim);
+            if (!p.name.empty())
+                drawn.insert(p.name);
+        }
+    } else if (MlCache::charactersAddr) {
+        for (auto& p : MlCache::players) {
+            if (!p.isValid)
+                continue;
+            if (alreadyDrawn(p.name))
+                continue;
+            if (Keys::TeamCheckOn() && p.teamAddr && p.teamAddr == MlCache::localTeam && !PlayersTab::IsMarked(p.name))
+                continue;
+            RenderOnePlayer(dl, v, p, MlCache::localPos, font, espSize, disp,
+                boxCol, nameCol, distCol, toolCol, flagsCol, headDotCol, viewDirCol, skelCol,
+                murderCol, sheriffCol, innocentCol, needFlagsVel, needPrim);
+            if (!p.name.empty())
+                drawn.insert(p.name);
         }
     } else {
         for (auto& p : PlayerCache::players) {
             if (!p.isValid)
                 continue;
+            if (alreadyDrawn(p.name))
+                continue;
             RenderOnePlayer(dl, v, p, PlayerCache::localPlayerPos, font, espSize, disp,
                 boxCol, nameCol, distCol, toolCol, flagsCol, headDotCol, viewDirCol, skelCol,
                 murderCol, sheriffCol, innocentCol, needFlagsVel, needPrim);
+            if (!p.name.empty())
+                drawn.insert(p.name);
         }
     }
     if (!PfCache::players.empty()) {
         const bool tc = Keys::TeamCheckOn();
         const RBX::Vec3 lp = PfCache::localPos;
+        const float pfFocal = EspFocal(disp.y);
         for (auto& p : PfCache::players) {
             if (!p.isValid || !p.headAddr || !p.torsoAddr)
+                continue;
+            if (alreadyDrawn(p.name))
+                continue;
+            if (!std::isfinite(p.health) || p.health <= 0.0f)
                 continue;
             if (PlayersTab::IsFriend(p.name))
                 continue;
@@ -604,8 +694,8 @@ void RenderESP(ImDrawList* dl, const RBX::Mat4& v) {
                 bool any = false;
                 float mnX = 1e9f, mxX = -1e9f, mnY = 1e9f, mxY = -1e9f;
                 for (int i = 0; i < n; ++i) {
-                    const auto s = W2S::WorldToScreen(pts[i], v);
-                    if (s.X == 0 && s.Y == 0)
+                    RBX::Vec2 s{};
+                    if (!ProjectPoint(pts[i], v, s))
                         continue;
                     any = true;
                     if (s.X < mnX) mnX = s.X;
@@ -625,9 +715,8 @@ void RenderESP(ImDrawList* dl, const RBX::Mat4& v) {
             } else {
                 RBX::Vec3 top3{hp.X, hp.Y + 0.5f, hp.Z};
                 RBX::Vec3 bot3{rp.X, rp.Y - 3.0f, rp.Z};
-                const auto top = W2S::WorldToScreen(top3, v);
-                const auto bot = W2S::WorldToScreen(bot3, v);
-                if ((top.X == 0 && top.Y == 0) || (bot.X == 0 && bot.Y == 0))
+                RBX::Vec2 top{}, bot{};
+                if (!ProjectPoint(top3, v, top) || !ProjectPoint(bot3, v, bot))
                     continue;
                 const float h = bot.Y - top.Y;
                 const float w = h * 0.55f;
@@ -636,6 +725,8 @@ void RenderESP(ImDrawList* dl, const RBX::Mat4& v) {
                 y0 = top.Y;
                 y1 = bot.Y;
             }
+            if (!SanityBox(dist, x0, y0, x1, y1, pfFocal))
+                continue;
             if (x0 < -500 || y0 < -500 || x1 > disp.x + 500 || y1 > disp.y + 500)
                 continue;
             if (variables::ESP::boxes)
@@ -674,6 +765,8 @@ void RenderESP(ImDrawList* dl, const RBX::Mat4& v) {
                     dl->AddCircle(ImVec2(hs.x, hs.y), r + 1.0f, IM_COL32(0, 0, 0, 180), 12, 1.0f);
                 }
             }
+            if (!p.name.empty())
+                drawn.insert(p.name);
         }
     }
     if (variables::ESP::localPlayer) {
@@ -697,9 +790,8 @@ void RenderESP(ImDrawList* dl, const RBX::Mat4& v) {
             } else {
                 RBX::Vec3 top3{hp.X, hp.Y + 0.5f, hp.Z};
                 RBX::Vec3 bot3{rp.X, rp.Y - (r6 ? 3.0f : 2.5f), rp.Z};
-                const auto top = W2S::WorldToScreen(top3, v);
-                const auto bot = W2S::WorldToScreen(bot3, v);
-                if ((top.X == 0 && top.Y == 0) || (bot.X == 0 && bot.Y == 0))
+                RBX::Vec2 top{}, bot{};
+                if (!ProjectPoint(top3, v, top) || !ProjectPoint(bot3, v, bot))
                     return;
                 const float h = bot.Y - top.Y;
                 const float w = h * 0.55f;
@@ -708,6 +800,8 @@ void RenderESP(ImDrawList* dl, const RBX::Mat4& v) {
                 y0 = top.Y;
                 y1 = bot.Y;
             }
+            if (!SanityBox(0.0f, x0, y0, x1, y1, EspFocal(disp.y)))
+                return;
             {
                 if (variables::ESP::boxes)
                     DrawBoxFill(dl, x0, y0, x1, y1);
@@ -789,6 +883,9 @@ void Visuals::RenderMeshChams(ImDrawList* dl, const RBX::Mat4& v) {
     } else if (CbCache::charactersAddr) {
         for (auto& p : CbCache::players)
             drawOne(p, CbCache::localPos);
+    } else if (MlCache::charactersAddr) {
+        for (auto& p : MlCache::players)
+            drawOne(p, MlCache::localPos);
     } else {
         for (auto& p : PlayerCache::players)
             drawOne(p, PlayerCache::localPlayerPos);

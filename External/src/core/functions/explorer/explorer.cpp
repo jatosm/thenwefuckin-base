@@ -1,4 +1,5 @@
-﻿#ifndef IMGUI_DEFINE_MATH_OPERATORS
+﻿// discord.gg/thenwefuckin
+#ifndef IMGUI_DEFINE_MATH_OPERATORS
 #define IMGUI_DEFINE_MATH_OPERATORS
 #endif
 #include "explorer.h"
@@ -30,6 +31,7 @@
 #include <cstring>
 #include <ctime>
 #include <filesystem>
+#include <iostream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -41,6 +43,28 @@ namespace {
 
 bool g_open = false;
 ID3D11Device* g_device = nullptr;
+bool g_onlyRan = false;
+
+std::mutex g_logMtx;
+void ExpLog(const std::string& msg) {
+    std::lock_guard<std::mutex> lk(g_logMtx);
+    HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+    CONSOLE_SCREEN_BUFFER_INFO old{};
+    GetConsoleScreenBufferInfo(h, &old);
+    constexpr WORD LW = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY;
+    constexpr WORD LD = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
+    constexpr WORD LC = FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY;
+    std::cout << "       ";
+    SetConsoleTextAttribute(h, LW);
+    std::cout << "[";
+    SetConsoleTextAttribute(h, LC);
+    std::cout << "explorer";
+    SetConsoleTextAttribute(h, LW);
+    std::cout << "] ";
+    SetConsoleTextAttribute(h, LD);
+    std::cout << msg << "\n";
+    SetConsoleTextAttribute(h, old.wAttributes);
+}
 
 struct IconTex {
     ID3D11ShaderResourceView* tex = nullptr;
@@ -277,6 +301,7 @@ void DumpAll() {
     if (s_dumping.exchange(true))
         return;
     std::thread([]() {
+        ExpLog("dumping instances...");
         char* up = nullptr;
         size_t len = 0;
         _dupenv_s(&up, &len, "USERPROFILE");
@@ -337,6 +362,11 @@ void DumpAll() {
         }
         std::fprintf(f, "\nTotal: %zu instances\n", count);
         std::fclose(f);
+        {
+            char b[256];
+            std::snprintf(b, sizeof(b), "dumped %zu instances -> %s", count, path.c_str());
+            ExpLog(b);
+        }
         s_dumping.store(false);
     }).detach();
 }
@@ -403,6 +433,7 @@ void DumpImages() {
     if (s_imgDumping.exchange(true))
         return;
     std::thread([]() {
+        ExpLog("dumping images...");
         char* up = nullptr;
         size_t len = 0;
         _dupenv_s(&up, &len, "USERPROFILE");
@@ -521,6 +552,11 @@ void DumpImages() {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
         if (idx) fclose(idx);
+        {
+            char b[128];
+            std::snprintf(b, sizeof(b), "images done=%d failed=%d", done, fail);
+            ExpLog(b);
+        }
         s_imgDumping.store(false);
     }).detach();
 }
@@ -533,16 +569,48 @@ struct DecompiledScript {
 std::vector<DecompiledScript> s_scripts;
 std::mutex s_scriptsMutex;
 
-std::vector<uint8_t> ReadScriptBytes(std::uintptr_t scriptAddr) {
+std::vector<uint8_t> ReadScriptBytes(
+    std::uintptr_t scriptAddr, const std::string& className, std::string& why) {
     std::vector<uint8_t> out;
-    if (!scriptAddr) return out;
-    const std::uintptr_t bc = memory->read<std::uintptr_t>(scriptAddr + Offsets::LocalScript::ByteCode);
-    if (!bc) return out;
+    why.clear();
+    if (!scriptAddr) {
+        why = "null instance";
+        return out;
+    }
+    std::uintptr_t field = 0;
+    if (className == "LocalScript")
+        field = Offsets::LocalScript::Bytecode;
+    else if (className == "ModuleScript")
+        field = Offsets::ModuleScript::Bytecode;
+    else {
+        why = "unsupported class '" + className + "' (only LocalScript/ModuleScript)";
+        return out;
+    }
+    if (!field) {
+        why = "no bytecode offset for class '" + className + "'";
+        return out;
+    }
+    const std::uintptr_t bc = memory->read<std::uintptr_t>(scriptAddr + field);
+    if (!bc) {
+        why = "no bytecode struct (script never ran / not replicated)";
+        return out;
+    }
     const std::uintptr_t ptr = memory->read<std::uintptr_t>(bc + Offsets::ByteCode::Pointer);
     const std::uint32_t sz = memory->read<std::uint32_t>(bc + Offsets::ByteCode::Size);
-    if (!ptr || sz == 0 || sz > 8 * 1024 * 1024) return out;
+    char detail[128];
+    std::snprintf(detail, sizeof(detail), "struct=0x%llX data=0x%llX size=%u",
+        (unsigned long long)bc, (unsigned long long)ptr, (unsigned)sz);
+    if (!ptr || sz == 0 || sz > 8 * 1024 * 1024) {
+        why = std::string("bad bytecode header (") + detail + ")";
+        return out;
+    }
     out.resize(sz);
-    if (!memory->read_raw(ptr, out.data(), sz)) out.clear();
+    if (!memory->read_raw(ptr, out.data(), sz)) {
+        why = std::string("memory read failed (") + detail + ")";
+        out.clear();
+        return out;
+    }
+    why.assign(detail);
     return out;
 }
 
@@ -574,6 +642,27 @@ std::string HexDisassemble(const std::vector<uint8_t>& bytes, const std::string&
     return s;
 }
 
+bool ScriptHasRun(std::uintptr_t addr, const std::string& cls) {
+    static std::unordered_map<std::uintptr_t, std::pair<char, std::chrono::steady_clock::time_point>> cache;
+    const auto now = std::chrono::steady_clock::now();
+    if (auto it = cache.find(addr); it != cache.end()) {
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second.second).count() < 2000)
+            return it->second.first != 0;
+    }
+    if (cache.size() > 4096)
+        cache.clear();
+    bool has = false;
+    std::uintptr_t field = 0;
+    if (cls == "LocalScript")
+        field = Offsets::LocalScript::Bytecode;
+    else if (cls == "ModuleScript")
+        field = Offsets::ModuleScript::Bytecode;
+    if (field && memory)
+        has = memory->read<std::uintptr_t>(addr + field) != 0;
+    cache[addr] = {(char)has, now};
+    return has;
+}
+
 void SaveAndShowScript(const std::string& name, const std::vector<uint8_t>& bytes, bool disassemble) {
     char* up = nullptr;
     size_t len = 0;
@@ -595,12 +684,22 @@ void SaveAndShowScript(const std::string& name, const std::vector<uint8_t>& byte
         FILE* f = nullptr;
         fopen_s(&f, (dir + safe + ".dis.txt").c_str(), "w");
         if (f) { std::fwrite(txt.data(), 1, txt.size(), f); std::fclose(f); }
+        {
+            char b[160];
+            std::snprintf(b, sizeof(b), "disassembled '%s' (%zu bytes)", name.c_str(), bytes.size());
+            ExpLog(b);
+        }
         std::lock_guard<std::mutex> lk(s_scriptsMutex);
         s_scripts.push_back({name + " [disassembly]", txt, true});
     } else {
         FILE* f = nullptr;
         fopen_s(&f, (dir + safe + ".luauc").c_str(), "wb");
         if (f) { std::fwrite(bytes.data(), 1, bytes.size(), f); std::fclose(f); }
+        {
+            char b[160];
+            std::snprintf(b, sizeof(b), "saved '%s' bytecode (%zu bytes)", name.c_str(), bytes.size());
+            ExpLog(b);
+        }
         std::string txt = "-- decompile of " + name + " (" + std::to_string(bytes.size()) + " bytes)\n";
         txt += "-- NOTE: no luau decompiler backend linked; raw bytecode saved to jatos dumps\\scripts\\" + safe + ".luauc\n";
         txt += "-- printable strings found in bytecode:\n\n";
@@ -621,15 +720,65 @@ void SaveAndShowScript(const std::string& name, const std::vector<uint8_t>& byte
 
 void RenderScriptWindows() {
     std::lock_guard<std::mutex> lk(s_scriptsMutex);
+    const imGuiCustom::Theme& theme = imGuiCustom::GetTheme();
+    ImFont* font = imGuiCustom::GetFonts().CascadiaMonoBL ? imGuiCustom::GetFonts().CascadiaMonoBL : ImGui::GetFont();
+    const float fs = 12.0f * imGuiCustom::g_fontScale;
     for (auto& sc : s_scripts) {
-        if (!sc.open) continue;
+        if (!sc.open)
+            continue;
         ImGui::SetNextWindowSize(ImVec2(560, 420), ImGuiCond_FirstUseEver);
-        if (ImGui::Begin(sc.name.c_str(), &sc.open)) {
-            ImGui::TextDisabled("%zu chars", sc.text.size());
-            ImGui::BeginChild("##scripttxt", ImVec2(0, 0), true);
-            ImGui::TextUnformatted(sc.text.c_str());
-            ImGui::EndChild();
+        if (!ImGui::Begin(sc.name.c_str(), nullptr,
+                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar |
+                    ImGuiWindowFlags_NoScrollWithMouse)) {
+            ImGui::End();
+            continue;
         }
+        const ImVec2 origin =
+            ImVec2(std::floor(ImGui::GetWindowPos().x), std::floor(ImGui::GetWindowPos().y));
+        const ImVec2 wsz = ImGui::GetWindowSize();
+        const ImVec2 winMax = origin + ImVec2(std::floor(wsz.x), std::floor(wsz.y));
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->AddRectFilled(origin, winMax, imGuiCustom::ColorU32(theme.WindowBg), 0.0f);
+        draw->AddRect(origin, winMax, imGuiCustom::OutlineBlack(), 0.0f, 0, 1.0f);
+        draw->AddRect(
+            origin + ImVec2(1.f, 1.f), winMax - ImVec2(1.f, 1.f), imGuiCustom::OutlineInner(), 0.0f, 0, 1.0f);
+        draw->AddRectFilled(origin, origin + ImVec2(winMax.x - origin.x, 1.5f),
+            imGuiCustom::ColorU32(ImVec4(0.5373f, 0.7647f, 0.7490f, 1.0f)), 0.0f);
+        const ImVec2 title_sz = font->CalcTextSizeA(fs, FLT_MAX, 0.f, sc.name.c_str());
+        draw->AddText(font, fs,
+            origin + ImVec2(std::floor((winMax.x - origin.x - title_sz.x) * 0.5f), 3.5f),
+            imGuiCustom::ColorU32(theme.TextBright), sc.name.c_str());
+        const ImVec2 childPos = origin + ImVec2(6.0f, 22.0f);
+        const ImVec2 childSize =
+            ImVec2(winMax.x - origin.x - 12.0f, winMax.y - origin.y - 28.0f);
+        ImGui::SetCursorScreenPos(childPos);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, imGuiCustom::ColorU32(theme.CardBg));
+        ImGui::PushStyleColor(ImGuiCol_Text, imGuiCustom::ColorU32(theme.TextBright));
+        ImGui::BeginChild("##scripttxt", childSize, false, ImGuiWindowFlags_NoScrollbar);
+        static std::unordered_map<std::string, float> s_codeScroll;
+        float& cscroll = s_codeScroll[sc.name];
+        if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+            const float wh = ImGui::GetIO().MouseWheel;
+            if (wh != 0.f && !imGuiCustom::PopupBlocking())
+                cscroll -= wh * 22.0f;
+        }
+        ImGui::PushTextWrapPos(childPos.x + childSize.x - 8.0f);
+        ImGui::TextUnformatted(sc.text.c_str());
+        ImGui::PopTextWrapPos();
+        if (cscroll < 0.f)
+            cscroll = 0.f;
+        const float scrollMax = ImGui::GetScrollMaxY();
+        if (cscroll > scrollMax)
+            cscroll = scrollMax;
+        ImGui::SetScrollY(cscroll);
+        ImGui::EndChild();
+        ImGui::PopStyleColor(2);
+        ImDrawList* fdl = ImGui::GetWindowDrawList();
+        const ImVec2 cmin = childPos, cmax = childPos + childSize;
+        fdl->AddRect(cmin, cmax, imGuiCustom::OutlineBlack(), 0.f, 0, 1.f);
+        fdl->AddRect(cmin + ImVec2(1, 1), cmax - ImVec2(1, 1), imGuiCustom::OutlineInner(), 0.f, 0,
+            1.f);
         ImGui::End();
     }
     s_scripts.erase(std::remove_if(s_scripts.begin(), s_scripts.end(),
@@ -642,6 +791,10 @@ void DrawNode(RBX::RbxInstance inst, RBX::RbxInstance& selected, float iconSize)
     if (ImGui::GetCurrentWindow() && ImGui::GetCurrentWindow()->SkipItems)
         return;
     CachedNode ec = GetCached(inst);
+    if (g_onlyRan &&
+        (ec.cls == "LocalScript" || ec.cls == "ModuleScript" || ec.cls == "Script") &&
+        !ScriptHasRun(inst.Addr, ec.cls))
+        return;
     if (!g_texturesLoaded)
         LoadAllIcons();
     IconTex* icon = GetIcon(ec.cls);
@@ -704,6 +857,10 @@ void ThemedInput(const char* id, char* buf, std::size_t cap, const ImVec2& size,
 
 void SetOpen(bool open) {
     g_open = open;
+    if (!open) {
+        std::lock_guard<std::mutex> lk(s_scriptsMutex);
+        s_scripts.clear();
+    }
 }
 
 bool IsOpen() {
@@ -782,6 +939,11 @@ void RenderWindow(ID3D11Device* device) {
         ImVec2 rel = ImVec2(bpos.x - wpos.x, bpos.y - wpos.y);
         imGuiCustom::Combo("exp_filter", &filter_idx, filters, 5, rel, 180.f, "");
         ImGui::SetCursorScreenPos(ImVec2(bpos.x, bpos.y + imGuiCustom::ComboStep()));
+    }
+    {
+        ImVec2 cpos = origin + ImVec2(512.f, 44.f);
+        ImVec2 wpos = ImGui::GetWindowPos();
+        imGuiCustom::Checkbox("Only ran", &g_onlyRan, ImVec2(cpos.x - wpos.x, cpos.y - wpos.y));
     }
 
     const float listTop = 68.f;
@@ -1064,13 +1226,28 @@ void RenderWindow(ID3D11Device* device) {
                 if ((doDecomp || doDis) && selected.Addr) {
                     std::string nm = selected.GetName();
                     if (nm.empty()) nm = cls;
-                    std::vector<uint8_t> bytes = ReadScriptBytes(selected.Addr);
-                    if (bytes.empty()) {
+                    const std::string tag = nm + (doDis ? " [disassembly]" : " [decompile]");
+                    bool wasOpen = false;
+                    {
                         std::lock_guard<std::mutex> lk(s_scriptsMutex);
-                        s_scripts.push_back({nm + (doDis ? " [disassembly]" : " [decompile]"),
-                            "-- failed to read bytecode (empty or unreadable) --", true});
+                        for (auto& sc : s_scripts) {
+                            if (sc.open && sc.name == tag) {
+                                sc.open = false;
+                                wasOpen = true;
+                            }
+                        }
+                    }
+                    if (wasOpen) {
                     } else {
-                        SaveAndShowScript(nm, bytes, doDis);
+                        std::string why;
+                        std::vector<uint8_t> bytes = ReadScriptBytes(selected.Addr, cls, why);
+                        if (bytes.empty()) {
+                            std::lock_guard<std::mutex> lk(s_scriptsMutex);
+                            s_scripts.push_back(
+                                {tag, "-- failed to read bytecode --\n-- " + why + " --", true});
+                        } else {
+                            SaveAndShowScript(nm, bytes, doDis);
+                        }
                     }
                 }
             }

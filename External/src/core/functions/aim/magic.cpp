@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #include "magic.h"
 #include "raycast.h"
 

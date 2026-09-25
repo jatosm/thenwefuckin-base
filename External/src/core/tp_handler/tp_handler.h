@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #pragma once
 
 namespace Core {

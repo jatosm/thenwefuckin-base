@@ -1,18 +1,21 @@
 **AIM**
-- Aimbot (Memory / Viewport / Raycast / PF Silent)
+- Aimbot (Memory / Viewport / Raycast / PF Silent / Magic Bullet)
 - Head, Torso, Left Arm, Right Arm, Left Leg, Right Leg, HRP, Closest
 - Prediction + Fallen Prediction (weapon auto-detect, BV override, Gravity Mult)
 - Movement-history velocity (regression + turn damping)
 - Include NPC
 - Visible Check (cached geometry raycast)
+- Knock Check / Forcefield Check / Spectate Check / Health Check
 - Deadzone
 - Spread Modifier + Spread Amount + Hit Chance
+- Auto Switch + Sticky Aim
+- 360 Mode (Keybind / Hold / Toggle)
 - Triggerbot (Key / Delay)
-- FOV Circle + Color
+- FOV Circle (Fill + Color)
 - Smoothing
 - Silent Tracer + Prediction Line
 - Keybind (Hold / Toggle / Always)
-- Multi-game targets (Players / PF / CB / Ops caches)
+- Multi-game targets (Players / PF / CB / Ops / ML caches)
 
 **VISUALS**
 - Boxes (Full + Outline)
@@ -25,12 +28,12 @@
 - Flags (State / Rig / Health / Tool / Distance / Velocity / Team / Role)
 - Head Dot + Size
 - View Direction + Length
-- Skeleton + Thickness
+- Skeleton + Thickness + Outline
 - Friend hide + [TARGET] highlight
 - Team Check
 - Local Player
 - Dead Check
-- Mesh Chams + Distance LOD
+- Mesh Chams (DX11 Vertex/Pixel Shader, Occluded / Visible) + Distance LOD
 - Full Color Customization
 
 **WORLD**
@@ -39,8 +42,14 @@
 - Plants (Wool / Blueberry / Raspberry / Lemon / Corn / Pumpkin / Tomato)
 - Animals (Deer / WildBoar / Wolf + Box / Health)
 - Soldiers (Boris / Bruno / Brutus / Soldier + Box / Health)
+- Murder Mystery (Murderer / Sheriff / Innocent Colors)
 - Tools (Base Cabinet / Storages / Anvil / Furnace / Sleeping Bag + 3D Box)
+- Crates (34 categories)
+- Drops (Ground Loot / Dead Drops)
+- Keycards (Red / Blue / Green / Yellow / Purple)
 - Wireframe (collision geometry)
+- Lighting & Atmosphere (Clock Time / Brightness / Ambient / Outdoor Ambient / Fog / Exposure)
+- Custom Skybox (IDs / Presets)
 
 **MOVEMENT**
 - WalkSpeed
@@ -50,18 +59,23 @@
 - Gravity
 - Fly (Velocity + Damping + Check Typing)
 - Noclip (All Parts / Root Only)
-- Freecam (Speed / Sensitivity)
+- Freecam (Speed / Sensitivity / Shift Multiplier / AZERTY / Freeze Character)
 - FOV Changer
+- Hitbox Expander (Size X/Y/Z + Team Check + Knock Check)
+- Spiderman
+- No Fall Damage
+- Tickrate (Physics Rate)
 
 **MISC**
 - Team Check
 - Stream Proof
 - Watermark (FPS / Version / Players / Ping / Time + Keybind States)
 - Keybind List
-- Players window (roster, target, friend) [ADDED]
-- Backpack viewer (enemy hotbar items + overlay) [ADDED]
-- Player Preview panel [ADDED]
-- Explorer (instance dump + image dump)
+- Players window (roster, target, friend)
+- Backpack viewer (enemy hotbar items + overlay)
+- Player Preview panel (3D turntable, spin, health sweep)
+- Remote Teleport Handler
+- Explorer (instance dump + image dump + bytecode view)
 
 **SETTINGS**
 - VSync
@@ -77,3 +91,5 @@
 https://github.com/jatosm/thenwefuckin-base
 https://discord.gg/thenwefuckin
 https://jatos.lol/
+
+@everyone 

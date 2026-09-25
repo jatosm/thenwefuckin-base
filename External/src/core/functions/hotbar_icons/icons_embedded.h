@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #pragma once
 #include <cstddef>
 static const unsigned char icon_0[] = {

@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #include "MeshParser.h"
 #include "sdk/MeshBridge.h"
 

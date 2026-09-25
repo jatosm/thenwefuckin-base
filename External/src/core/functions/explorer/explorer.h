@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #pragma once
 
 struct ID3D11Device;

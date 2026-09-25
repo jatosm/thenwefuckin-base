@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #include "freecam.h"
 #include "../../variables/variables.h"
 #include "../../globals/globals.h"

@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #pragma once
 #include <d3d11.h>
 struct ImDrawList;

@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #pragma once
 #include <Windows.h>
 #include <string>
@@ -6,6 +7,12 @@
 namespace variables {
 inline bool menuOpen = false;
 inline int selectedTab = 0;
+inline int selectedVisualSub = 0;
+inline int selectedAimSub = 0;
+inline int selectedMicsSub = 0;
+inline int selectedSettingsSub = 0;
+inline bool previewSpin = true;
+inline bool previewAnimateHealth = false;
 inline bool waitingForKey = false;
 inline int* keyToRebind = nullptr;
 inline bool teamCheck = false;
@@ -182,7 +189,7 @@ inline ImVec4 animalsColor[3] = {ImVec4(0.6f,0.8f,0.6f,1.0f), ImVec4(0.8f,0.6f,0
 inline bool animalsBox = false;
 inline bool animalsHealth = false;
 inline bool soldiers = false;
-inline bool soldiersSel[4] = {true, true, true, true};
+inline bool soldiersSel[69] = {true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true,true};
 inline ImVec4 soldiersColor[4] = {ImVec4(1.0f,0.3f,0.3f,1.0f), ImVec4(0.3f,0.6f,1.0f,1.0f), ImVec4(1.0f,0.6f,0.2f,1.0f), ImVec4(0.8f,0.8f,0.8f,1.0f)};
 inline bool soldiersBox = false;
 inline bool soldiersHealth = false;
@@ -193,6 +200,18 @@ inline bool tools = false;
 inline bool toolsSel[7] = {true, true, true, true, true, true, true};
 inline ImVec4 toolsColor[7] = {ImVec4(0.6f,0.8f,1.0f,1.0f), ImVec4(0.6f,0.8f,1.0f,1.0f), ImVec4(0.6f,0.8f,1.0f,1.0f), ImVec4(0.6f,0.8f,1.0f,1.0f), ImVec4(0.6f,0.8f,1.0f,1.0f), ImVec4(0.6f,0.8f,1.0f,1.0f), ImVec4(0.6f,0.8f,1.0f,1.0f)};
 inline bool toolsBox = false;
+inline bool crates = false;
+inline bool cratesSel[8] = {true, true, true, true, true, true, true, true};
+inline ImVec4 cratesColor[34] = {ImVec4(1.0f, 0.8f, 0.3f, 1.0f), ImVec4(0.6f, 1.0f, 0.6f, 1.0f), ImVec4(0.75f, 0.55f, 0.35f, 1.0f), ImVec4(0.9f, 0.7f, 0.4f, 1.0f), ImVec4(0.6f, 0.65f, 0.7f, 1.0f), ImVec4(0.55f, 0.55f, 0.6f, 1.0f), ImVec4(1.0f, 0.5f, 0.2f, 1.0f), ImVec4(0.8f, 0.4f, 0.4f, 1.0f),
+ImVec4(0.65f, 0.45f, 0.25f, 1.0f), ImVec4(0.6f, 0.42f, 0.24f, 1.0f), ImVec4(0.5f, 0.7f, 0.9f, 1.0f), ImVec4(0.5f, 0.7f, 0.5f, 1.0f), ImVec4(0.35f, 0.45f, 0.3f, 1.0f), ImVec4(0.7f, 0.6f, 0.45f, 1.0f), ImVec4(0.55f, 0.55f, 0.5f, 1.0f), ImVec4(0.5f, 0.5f, 0.48f, 1.0f),
+ImVec4(0.5f, 0.5f, 0.48f, 1.0f), ImVec4(0.65f, 0.55f, 0.4f, 1.0f), ImVec4(0.85f, 0.85f, 0.8f, 1.0f), ImVec4(0.4f, 0.45f, 0.35f, 1.0f), ImVec4(0.45f, 0.55f, 0.65f, 1.0f), ImVec4(0.6f, 0.3f, 0.2f, 1.0f), ImVec4(0.55f, 0.28f, 0.18f, 1.0f), ImVec4(0.25f, 0.25f, 0.3f, 1.0f),
+ImVec4(0.85f, 0.9f, 0.9f, 1.0f), ImVec4(0.8f, 0.86f, 0.86f, 1.0f), ImVec4(0.8f, 0.85f, 0.85f, 1.0f), ImVec4(0.78f, 0.83f, 0.83f, 1.0f), ImVec4(0.8f, 0.65f, 0.4f, 1.0f), ImVec4(0.9f, 0.75f, 0.45f, 1.0f), ImVec4(0.88f, 0.72f, 0.42f, 1.0f), ImVec4(0.7f, 0.2f, 0.6f, 1.0f),
+ImVec4(0.3f, 0.5f, 0.7f, 1.0f), ImVec4(0.45f, 0.4f, 0.5f, 1.0f)};
+inline bool drops = false;
+inline ImVec4 dropsColor = ImVec4(0.6f, 1.0f, 0.6f, 1.0f);
+inline bool keycards = false;
+inline bool keycardsSel[5] = {true, true, true, true, true};
+inline ImVec4 keycardsColor[5] = {ImVec4(1.0f, 1.0f, 0.2f, 1.0f), ImVec4(0.7f, 0.3f, 1.0f, 1.0f), ImVec4(1.0f, 0.2f, 0.2f, 1.0f), ImVec4(1.0f, 0.4f, 0.8f, 1.0f), ImVec4(0.8f, 0.8f, 0.8f, 1.0f)};
 inline bool wireframe = false;
 inline float worldScroll = 0.f;
 inline float lightScroll = 0.f;

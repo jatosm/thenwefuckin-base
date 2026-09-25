@@ -1,4 +1,5 @@
-﻿LOAD_ICON(Accessory);
+﻿// discord.gg/thenwefuckin
+LOAD_ICON(Accessory);
 LOAD_ICON(Accoutrement);
 LOAD_ICON(Actor);
 LOAD_ICON(AdGui);

@@ -1,3 +1,4 @@
+// discord.gg/thenwefuckin
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
 #define IMGUI_DEFINE_MATH_OPERATORS
 #endif
@@ -28,7 +29,8 @@ void Render(ImDrawList* dl, const RBX::Mat4& v) {
     if (!variables::World::enabled) return;
 
     if (!variables::World::ores && !variables::World::plants && !variables::World::animals &&
-        !variables::World::soldiers && !variables::World::tools)
+        !variables::World::soldiers && !variables::World::tools && !variables::World::crates &&
+        !variables::World::drops && !variables::World::keycards)
         return;
     static std::vector<WorldCache::Entry> local;
     {
@@ -40,6 +42,11 @@ void Render(ImDrawList* dl, const RBX::Mat4& v) {
     float sz = WF_EspSize();
     const ImU32 white = IM_COL32(255,255,255,255);
     for (auto &e : local) {
+        if (e.humanoidAddr) {
+            float liveHp = memory->read<float>(e.humanoidAddr + Offsets::Humanoid::Health);
+            if (!std::isfinite(liveHp) || liveHp <= 0.0f) continue;
+            e.health = liveHp;
+        }
         ImVec2 scr;
         if (!WF_ToScreen(e.pos, v, scr)) continue;
         bool showName = variables::World::name;
@@ -51,8 +58,12 @@ void Render(ImDrawList* dl, const RBX::Mat4& v) {
         if (e.category=="plant" && e.plantIdx>=0 && e.plantIdx<7) distCol = WF_ToU32(variables::World::plantsColor[e.plantIdx]);
         else if (e.category=="ore" && e.oreIdx>=0 && e.oreIdx<3) distCol = WF_ToU32(variables::World::oresColor[e.oreIdx]);
         else if (e.category=="animal" && e.animalIdx>=0 && e.animalIdx<3) distCol = WF_ToU32(variables::World::animalsColor[e.animalIdx]);
-        else if (e.category=="soldier" && e.soldierIdx>=0 && e.soldierIdx<4) distCol = WF_ToU32(variables::World::soldiersColor[e.soldierIdx]);
+        else if (e.category=="soldier" && e.soldierIdx>=0) distCol = WF_ToU32(variables::World::soldiersColor[e.soldierIdx % 4]);
         else if (e.category=="tool" && e.toolIdx>=0 && e.toolIdx<7) distCol = WF_ToU32(variables::World::toolsColor[e.toolIdx]);
+        else if (e.category=="keycard" && e.keycardIdx>=0 && e.keycardIdx<5) distCol = WF_ToU32(variables::World::keycardsColor[e.keycardIdx]);
+        else if (e.category=="crate" && e.crateIdx>=0 && e.crateIdx<34) distCol = WF_ToU32(variables::World::cratesColor[e.crateIdx]);
+        else if (e.category=="drop") distCol = WF_ToU32(variables::World::dropsColor);
+        else if (e.category=="npc") distCol = WF_ToU32(variables::World::soldiersColor[0]);
         else if (e.category=="plant") distCol = IM_COL32(80,255,80,255);
         else if (e.category=="ore") distCol = IM_COL32(200,200,60,255);
         else if (e.category=="tool") distCol = IM_COL32(120,180,255,255);
@@ -62,7 +73,10 @@ void Render(ImDrawList* dl, const RBX::Mat4& v) {
         bool needBox=false, needHealth=false;
         if (e.category=="animal") { needBox=variables::World::animalsBox; needHealth=variables::World::animalsHealth; }
         if (e.category=="soldier") { needBox=variables::World::soldiersBox; needHealth=variables::World::soldiersHealth; }
-        if (e.category=="tool") { needBox=variables::World::toolsBox; }
+        if (e.category=="npc") {
+            needBox = variables::World::soldiersBox;
+            needHealth = variables::World::soldiersHealth;
+        }
         float bx0=0,bx1=0,by0=0,by1=0; bool hasBox=false;
         if (e.category=="tool" && needBox) {
             if (e.name=="Base Cabinet") {
@@ -99,7 +113,7 @@ void Render(ImDrawList* dl, const RBX::Mat4& v) {
                 }
             }
         }
-        bool isNPC = (e.category=="animal" || e.category=="soldier");
+        bool isNPC = (e.category=="animal" || e.category=="soldier" || e.category=="npc");
         if (showName && showDist) {
             const ImVec2 tsN = font->CalcTextSizeA(sz, FLT_MAX, 0.0f, e.name.c_str());
             const ImVec2 tsD = font->CalcTextSizeA(sz, FLT_MAX, 0.0f, distTxt.c_str());
