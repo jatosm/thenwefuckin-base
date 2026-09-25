@@ -73,9 +73,14 @@
 - Keybind List
 - Players window (roster, target, friend)
 - Backpack viewer (enemy hotbar items + overlay)
+<<<<<<< HEAD
 - Player Preview panel (3D turntable, spin, health sweep)
 - Remote Teleport Handler
 - Explorer (instance dump + image dump + bytecode view)
+=======
+- Player Preview panel
+- Explorer (instance dump + image dump)
+>>>>>>> 77b7244abf594aed9df3cb2fb861dd18338d2c77
 
 **SETTINGS**
 - VSync
